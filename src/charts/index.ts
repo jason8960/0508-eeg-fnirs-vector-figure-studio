@@ -22,4 +22,10 @@ import './eeg-encoder-detail';
 import './fnirs-encoder-detail';
 import './gat-cmc-overall';
 import './heterogeneous-graph-construction';
+import './hrf-kernel';
+import './hrf-alignment';
+import './gat-attention';
+import './gating-fusion';
+import './data-pyramid';
+import './event-decoding';
 

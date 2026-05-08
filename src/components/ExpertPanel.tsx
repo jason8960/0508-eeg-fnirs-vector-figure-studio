@@ -4,6 +4,7 @@ import {
   NumberInput,
   NumberSlider,
   Select,
+  TextArea,
   Toggle,
 } from './Controls';
 import type { ColormapName } from '../lib/colormaps';
@@ -70,12 +71,26 @@ interface InfoField {
   value: string;
 }
 
+interface TextField {
+  type: 'text';
+  key: string;
+  label: string;
+  description?: string;
+  value: string;
+  onChange: (v: string) => void;
+  multiline?: boolean;
+  rows?: number;
+  placeholder?: string;
+  monospace?: boolean;
+}
+
 export type ExpertField =
   | NumberField
   | ToggleField
   | SelectField
   | ColormapField
-  | InfoField;
+  | InfoField
+  | TextField;
 
 export interface ExpertGroup {
   label: string;
@@ -192,5 +207,49 @@ function renderField(field: ExpertField): ReactNode {
           <span className="font-mono text-ink-100">{field.value}</span>
         </div>
       );
+    case 'text':
+      return field.multiline ? (
+        <TextArea
+          label={field.label}
+          value={field.value}
+          onChange={field.onChange}
+          rows={field.rows ?? 3}
+          placeholder={field.placeholder}
+          monospace={field.monospace}
+        />
+      ) : (
+        <SingleLineText
+          label={field.label}
+          value={field.value}
+          onChange={field.onChange}
+          placeholder={field.placeholder}
+        />
+      );
   }
+}
+
+function SingleLineText({
+  label,
+  value,
+  onChange,
+  placeholder,
+}: {
+  label: string;
+  value: string;
+  onChange: (v: string) => void;
+  placeholder?: string;
+}) {
+  return (
+    <label className="flex flex-col gap-1 text-xs text-ink-200">
+      <span>{label}</span>
+      <input
+        type="text"
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        placeholder={placeholder}
+        spellCheck={false}
+        className="rounded border border-ink-600 bg-ink-800 px-2 py-1 text-ink-50 focus:border-accent focus:outline-none"
+      />
+    </label>
+  );
 }
