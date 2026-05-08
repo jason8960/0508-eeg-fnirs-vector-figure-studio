@@ -19,6 +19,7 @@ import {
 import type { ExpertSchema } from '../../components/ExpertPanel';
 import { InspirationPanel } from '../../components/InspirationPanel';
 import { renderInlineLatex } from '../../lib/latex';
+import { touchSlot, useAutoSave } from '../../lib/useAutoSave';
 import {
   usePanelDrag,
   type PanelDragSlot,
@@ -799,6 +800,11 @@ function FnirsEncoderDetailChart() {
     setAnnotations(cfg.annotations ?? []);
   }, []);
 
+  const persistAndSetSlots = useCallback((next: SavedConfigsMap) => {
+    setSavedConfigs(next);
+    persistConfigs(next);
+  }, []);
+
   const saveConfigToSlot = useCallback(
     (name: string) => {
       if (!name.trim()) return;
@@ -807,6 +813,7 @@ function FnirsEncoderDetailChart() {
         persistConfigs(next);
         return next;
       });
+      touchSlot(STORAGE_KEY, name);
     },
     [buildCurrentConfig],
   );
@@ -820,6 +827,15 @@ function FnirsEncoderDetailChart() {
       return rest;
     });
   }, []);
+
+  // 5-min auto-save + auto-load latest slot on mount.
+  useAutoSave<SavedConfig>({
+    storageKey: STORAGE_KEY,
+    current: buildCurrentConfig(),
+    slots: savedConfigs,
+    onPersistSlots: persistAndSetSlots,
+    applyConfig,
+  });
 
   const exportConfigToFile = useCallback(() => {
     downloadJson('fnirs-encoder-detail.config.json', buildCurrentConfig());
@@ -1483,7 +1499,10 @@ function FnirsEncoderDetailChart() {
               onSaveSlot={saveConfigToSlot}
               onLoadSlot={(name) => {
                 const cfg = savedConfigs[name];
-                if (cfg) applyConfig(cfg);
+                if (cfg) {
+                  applyConfig(cfg);
+                  touchSlot(STORAGE_KEY, name);
+                }
               }}
               onDeleteSlot={deleteConfigSlot}
               onExport={exportConfigToFile}

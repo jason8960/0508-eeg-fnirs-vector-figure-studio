@@ -19,6 +19,7 @@ import type { ExpertSchema } from '../../components/ExpertPanel';
 import { InspirationPanel } from '../../components/InspirationPanel';
 import { renderInlineLatex } from '../../lib/latex';
 import { registerChart } from '../../registry';
+import { touchSlot, useAutoSave } from '../../lib/useAutoSave';
 
 /* ----------------------------- types -----------------------------------*/
 
@@ -760,6 +761,11 @@ function ArchitectureOverallChart() {
     setAnnotations(cfg.annotations ?? []);
   }, []);
 
+  const persistAndSetSlots = useCallback((next: SavedConfigsMap) => {
+    setSavedConfigs(next);
+    persistConfigs(next);
+  }, []);
+
   const saveConfigToSlot = useCallback(
     (name: string) => {
       if (!name.trim()) return;
@@ -768,6 +774,7 @@ function ArchitectureOverallChart() {
         persistConfigs(next);
         return next;
       });
+      touchSlot(STORAGE_KEY, name);
     },
     [buildCurrentConfig],
   );
@@ -781,6 +788,15 @@ function ArchitectureOverallChart() {
       return rest;
     });
   }, []);
+
+  // 5-min auto-save + auto-load latest slot on mount.
+  useAutoSave<SavedConfig>({
+    storageKey: STORAGE_KEY,
+    current: buildCurrentConfig(),
+    slots: savedConfigs,
+    onPersistSlots: persistAndSetSlots,
+    applyConfig,
+  });
 
   const exportConfigToFile = useCallback(() => {
     downloadJson('architecture-overall.config.json', buildCurrentConfig());
@@ -1187,7 +1203,10 @@ function ArchitectureOverallChart() {
               onSaveSlot={saveConfigToSlot}
               onLoadSlot={(name) => {
                 const cfg = savedConfigs[name];
-                if (cfg) applyConfig(cfg);
+                if (cfg) {
+                  applyConfig(cfg);
+                  touchSlot(STORAGE_KEY, name);
+                }
               }}
               onDeleteSlot={deleteConfigSlot}
               onExport={exportConfigToFile}
