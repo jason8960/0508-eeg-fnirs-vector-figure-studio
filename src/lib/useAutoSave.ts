@@ -9,6 +9,9 @@
  *   - On chart mount, if `autoLoadLatest` is enabled and `slots` already
  *     contains entries, the most recently saved slot (auto or manual) is
  *     applied via `applyConfig`.
+ *   - When the number of `auto-#…` slots exceeds `maxAutoSlots` (default
+ *     20), the oldest auto slot is evicted to keep localStorage from
+ *     growing unbounded. Manual (non-`auto-#`) slots are never evicted.
  *
  * Slots are stored as a `Record<slotName, ConfigT>` in localStorage under
  * `storageKey`. A small companion record `<storageKey>:meta` tracks per-
@@ -43,9 +46,19 @@ export interface UseAutoSaveOptions<ConfigT> {
   autoLoadLatest?: boolean;
   /** Disable the entire hook (handy for tests / SSR). */
   enabled?: boolean;
+  /**
+   * Maximum number of `auto-#…` slots to retain. Once exceeded, the
+   * oldest auto slot (by meta timestamp, falling back to lexicographic
+   * ordering of the slot name) is evicted. Manual slots are never
+   * touched. Defaults to 20.
+   */
+  maxAutoSlots?: number;
 }
 
 const META_SUFFIX = ':meta';
+const DEFAULT_MAX_AUTO_SLOTS = 20;
+/** Pattern that identifies auto-generated slot names. */
+const AUTO_SLOT_RE = /^auto-#(\d+)/;
 
 function readMeta(storageKey: string): SlotMetaMap {
   try {
@@ -82,13 +95,56 @@ function formatTimestamp(d: Date): string {
 function nextAutoIndex(slots: Record<string, unknown>): number {
   let maxIdx = 0;
   for (const name of Object.keys(slots)) {
-    const m = name.match(/^auto-#(\d+)/);
+    const m = name.match(AUTO_SLOT_RE);
     if (m) {
       const n = Number(m[1]);
       if (n > maxIdx) maxIdx = n;
     }
   }
   return maxIdx + 1;
+}
+
+/**
+ * Drop the oldest `auto-#…` slots so at most `max` remain. Returns a
+ * (possibly identical) slots map and meta map. Ordering uses the meta
+ * timestamp first, then falls back to sorting auto slot names by their
+ * `#N` index so meta-less environments still behave deterministically.
+ * Manual slots (those not matching `AUTO_SLOT_RE`) are preserved in
+ * place even when they outnumber `max`.
+ */
+export function evictOldestAutoSlots<ConfigT>(
+  slots: Record<string, ConfigT>,
+  meta: SlotMetaMap,
+  max: number,
+): { slots: Record<string, ConfigT>; meta: SlotMetaMap; evicted: string[] } {
+  const autoNames = Object.keys(slots).filter((n) => AUTO_SLOT_RE.test(n));
+  if (autoNames.length <= max) {
+    return { slots, meta, evicted: [] };
+  }
+  // Sort oldest → newest. Smaller ts = older. When ts is missing
+  // (legacy slot), treat the auto-# index as a proxy for age.
+  autoNames.sort((a, b) => {
+    const ta = meta[a]?.ts;
+    const tb = meta[b]?.ts;
+    if (typeof ta === 'number' && typeof tb === 'number') return ta - tb;
+    if (typeof ta === 'number') return -1; // a older than b
+    if (typeof tb === 'number') return 1;
+    const ai = Number(a.match(AUTO_SLOT_RE)?.[1] ?? 0);
+    const bi = Number(b.match(AUTO_SLOT_RE)?.[1] ?? 0);
+    return ai - bi;
+  });
+  const dropCount = autoNames.length - max;
+  const toDrop = autoNames.slice(0, dropCount);
+  if (toDrop.length === 0) {
+    return { slots, meta, evicted: [] };
+  }
+  const nextSlots: Record<string, ConfigT> = { ...slots };
+  const nextMeta: SlotMetaMap = { ...meta };
+  for (const name of toDrop) {
+    delete nextSlots[name];
+    delete nextMeta[name];
+  }
+  return { slots: nextSlots, meta: nextMeta, evicted: toDrop };
 }
 
 /** Stable JSON stringify that ignores key order for top-level objects. */
@@ -157,6 +213,7 @@ export function useAutoSave<ConfigT>(opts: UseAutoSaveOptions<ConfigT>) {
     intervalMs = 5 * 60 * 1000,
     autoLoadLatest = true,
     enabled = true,
+    maxAutoSlots = DEFAULT_MAX_AUTO_SLOTS,
   } = opts;
 
   // Refs keep the loop in sync with the latest state without retriggering
@@ -206,12 +263,21 @@ export function useAutoSave<ConfigT>(opts: UseAutoSaveOptions<ConfigT>) {
       const idx = nextAutoIndex(slotsRef.current);
       const ts = formatTimestamp(new Date());
       const name = `auto-#${idx} (${ts})`;
-      const next = { ...slotsRef.current, [name]: currentRef.current };
-      onPersistRef.current(next);
+      // Stamp the new slot's metadata first so eviction sees it as the
+      // newest entry (and never accidentally drops it on the same tick).
       touchSlot(storageKey, name, { auto: true });
+      const proposed = { ...slotsRef.current, [name]: currentRef.current };
+      const meta = readMeta(storageKey);
+      const { slots: pruned, meta: prunedMeta } = evictOldestAutoSlots(
+        proposed,
+        meta,
+        maxAutoSlots,
+      );
+      writeMeta(storageKey, prunedMeta);
+      onPersistRef.current(pruned);
       lastSavedSnapshotRef.current = snap;
     };
     const handle = window.setInterval(tick, intervalMs);
     return () => window.clearInterval(handle);
-  }, [enabled, intervalMs, storageKey]);
+  }, [enabled, intervalMs, storageKey, maxAutoSlots]);
 }

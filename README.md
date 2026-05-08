@@ -131,7 +131,31 @@ npm install
 npm run dev             # http://localhost:5173
 npm run build           # tsc -b && vite build
 npm run lint
+npm test                # vitest run (pure-function unit tests)
 ```
+
+---
+
+## Slot persistence & auto-save
+
+The larger architecture-style charts (`architecture-overall`,
+`gat-cmc-overall`, `eeg-encoder-detail`, `fnirs-encoder-detail`,
+`heterogeneous-graph-construction`) ship a **named-slot config manager**
+plus a generic, opinionated **5-minute auto-save** loop:
+
+- Configs are stored as `Record<slotName, ConfigT>` in `localStorage`
+  under `<chart-id>-saved-configs-v1`. A companion `:meta` record
+  tracks per-slot timestamps.
+- Every 5 min the chart compares its current config against the last
+  persisted snapshot. If different, a new slot named
+  `auto-#<n> (YYYY-MM-DD HH:MM)` is appended and timestamped.
+- On mount, the chart auto-loads the most recently saved slot (auto
+  or manual). Manual slots are never auto-deleted.
+- An LRU keeps at most **20 auto slots** per chart (configurable via
+  the `maxAutoSlots` option) so localStorage cannot grow unbounded.
+
+The hook lives at <ref_file file="src/lib/useAutoSave.ts" /> and has
+focused unit tests at <ref_file file="src/lib/useAutoSave.test.ts" />.
 
 ---
 
@@ -167,74 +191,114 @@ Not yet supported (tracked as Phase 2 follow-ups):
 - **SNIRF** — HDF5 container; needs `h5wasm` (~2 MB runtime).
 - **EDF streaming** — files >50 MB still load fully into memory.
 
-## Chart catalogue (v1)
+## Chart catalogue (v2)
 
-All 14 figures ship with a seeded synthetic data generator, a Simple
+All 19 figures ship with a seeded synthetic data generator, a Simple
 inspector (3–5 high-impact controls), an Expert parameter tree (full
-controllable surface, collapsible), and an Inspiration panel
-(curated variant tiles that re-bind several Expert parameters in one
-click — e.g. *Rare-disease screening* on ROC/PR or *Sparse network*
-on HeGAT-Map).
+controllable surface, collapsible), and an Inspiration panel (curated
+variant tiles that re-bind several Expert parameters in one click —
+e.g. *Rare-disease screening* on ROC/PR or *Sparse network* on
+HeGAT-Map). Architecture-style figures additionally support
+direct-drag panel layout, per-edge waypoint dragging, free-text LaTeX
+annotations, named-slot save/load, JSON import/export, and 5-minute
+auto-save (see *Slot persistence & auto-save*).
 
-### Architecture (3)
+### Architecture (8)
 
-1. **Heterogeneous Graph Attention Map** — force-directed bipartite
-   graph between EEG electrodes and fNIRS channels with
+1. **GAT-CMC-Net · 异质图融合癫痫检测** — Fig 1 of the paper. 9-panel
+   end-to-end view of the EEG/fNIRS pipeline with embedded vis blocks
+   for adjacency, lollipops, HRF kernel, gating bars, and event-level
+   output. Walkthrough: <ref_file file="docs/charts/gat-cmc-overall.md" />.
+2. **GAT-CMC-Net · Overall Architecture** — top-level Fig 2 / arch
+   diagram with directly-draggable panels and per-edge waypoint
+   handles.
+3. **EEG Encoder · Dual-Stream (1D Temporal + 2D Spectral)** — module
+   detail for the EEG branch.
+4. **fNIRS Encoder · Cross-Channel HbO/HbR** — module detail for the
+   fNIRS branch.
+5. **Heterogeneous Graph Construction · Dual Node Types + Three Edge
+   Categories** — Fig 4 visual derivation: 9 EEG + 7 fNIRS nodes,
+   intra-EEG / intra-fNIRS / cross-modal edge layers with per-channel
+   $\tau_j$ HRF-shift labels. Walkthrough:
+   <ref_file file="docs/charts/heterogeneous-graph-construction.md" />.
+6. **Heterogeneous Graph Attention Map (HeGAT-Map)** — force-directed
+   bipartite graph between EEG electrodes and fNIRS channels with
    attention-weighted edges.
-2. **Bimodal Feature Fusion Flowchart** — layered DAG of the EEG/fNIRS
+7. **Bimodal Feature Fusion Flowchart** — layered DAG of the EEG/fNIRS
    fusion network with per-edge tensor-shape annotations.
-3. **Spatiotemporal CNN Architecture** — cabinet-projection cube
+8. **Spatiotemporal CNN Architecture** — cabinet-projection cube
    sequence visualising `T × C × F` evolution through dilated TCN
    blocks.
 
 ### Physiology (3)
 
-4. **EEG–fNIRS Co-registration Topomap** — 10-20 azimuthal scalp map
+9. **EEG–fNIRS Co-registration Topomap** — 10-20 azimuthal scalp map
    with fNIRS optodes and Banana-shape source–detector photon paths.
-5. **Neurovascular Coupling Alignment** — dual-axis EEG / HbO–HbR time
-   series with seizure-stage highlight bands.
-6. **3.5D Cortical Projection** — procedural brain mesh rendered as
-   depth-sorted SVG triangles with per-vertex activation colouring.
+10. **Neurovascular Coupling Alignment** — dual-axis EEG / HbO–HbR
+    time series with seizure-stage highlight bands.
+11. **3.5D Cortical Projection** — procedural brain mesh rendered as
+    depth-sorted SVG triangles with per-vertex activation colouring.
 
 ### Clinical (3)
 
-7. **Cross-modal Lead–Lag Correlation Matrix** — EEG↔fNIRS lag matrix
-   with p-value significance stars.
-8. **Seizure Focus Localisation** — d3-contour over a 2D importance
-   grid clipped to the head disc, with anatomical landmarks.
-9. **Dynamic Connectivity Chord** — time-sliceable chord diagram of a
-   `T × N × N` attention tensor.
+12. **Cross-modal Lead–Lag Correlation Matrix** — EEG↔fNIRS lag matrix
+    with p-value significance stars.
+13. **Seizure Focus Localisation** — d3-contour over a 2D importance
+    grid clipped to the head disc, with anatomical landmarks.
+14. **Dynamic Connectivity Chord** — time-sliceable chord diagram of a
+    `T × N × N` attention tensor.
 
 ### Evaluation (5)
 
-10. **ROC + PR curves** — multi-classifier overlay with AUC, AP, and
+15. **ROC + PR curves** — multi-classifier overlay with AUC, AP, and
     bootstrap 95% confidence intervals.
-11. **Confusion Matrix** — per-class predictions with row-normalisation
+16. **Confusion Matrix** — per-class predictions with row-normalisation
     toggle and contrast-aware annotations.
-12. **Calibration Curve** — reliability diagram with Expected
+17. **Calibration Curve** — reliability diagram with Expected
     Calibration Error per model, marker size encoding bin count.
-13. **Ablation Contribution Funnel** — trapezoidal funnel showing
+18. **Ablation Contribution Funnel** — trapezoidal funnel showing
     per-component accuracy delta.
-14. **Feature Manifold (t-SNE / UMAP)** — class-coloured embedding
+19. **Feature Manifold (t-SNE / UMAP)** — class-coloured embedding
     scatter with covariance-derived 95% confidence ellipses.
+
+---
+
+## Per-chart documentation
+
+Module-by-module walkthroughs (math, clinical context, panel-by-panel
+notes) live under `docs/charts/`:
+
+- <ref_file file="docs/charts/gat-cmc-overall.md" /> — full GAT-CMC-Net
+  pipeline.
+- <ref_file file="docs/charts/heterogeneous-graph-construction.md" /> —
+  heterogeneous graph $G = (V, E)$ construction, three edge categories,
+  per-channel HRF soft-shift $\tau_j$.
 
 ---
 
 ## Roadmap
 
-- **Phase 1 — MVP.** ✅ All 14 figures implemented with seeded synthetic
-  data; SVG-first vector pipeline; DPI-configurable PNG export; KaTeX
-  titles + captions; Simple inspector per chart.
-- **Phase 2 — Alpha.** ✅ MathJax SVG output for true vector formulas;
-  ✅ Expert mode parameter tree; ✅ Inspiration variant tiles;
-  ✅ EDF + BIDS sidecar ingestion (Web Worker) wired to the topomap.
-  SNIRF (HDF5) parsing is the last remaining Phase 2 item; tracked
-  as a follow-up because it requires a 2 MB+ WASM runtime.
-- **Phase 3 — Beta.** Project workspace + snapshots + IndexedDB cache;
-  batch export and quality-check engine; live KaTeX editor.
-- **Phase 4 — v1.0.** Tauri-packaged desktop builds for Windows /
-  macOS, memory-stable large-tensor ingestion, public render-jobs API,
-  team-version (auth / audit / RLS).
+- **Phase 1 — MVP.** All 14 generic figures (ROC/PR, calibration,
+  topomap, …) with seeded synthetic data; SVG-first vector pipeline;
+  DPI-configurable PNG export; KaTeX titles + captions; Simple
+  inspector per chart.
+- **Phase 2 — Alpha.** MathJax SVG output for true vector formulas;
+  Expert mode parameter tree; Inspiration variant tiles; EDF + BIDS
+  sidecar ingestion (Web Worker) wired to the topomap. SNIRF (HDF5)
+  parsing is the last remaining Phase 2 item; tracked as a follow-up
+  because it requires a 2 MB+ WASM runtime.
+- **Phase 3 — Paper figures (current).** Architecture-class charts
+  for the GAT-CMC-Net paper (`gat-cmc-overall`, `architecture-overall`,
+  `eeg-encoder-detail`, `fnirs-encoder-detail`,
+  `heterogeneous-graph-construction`) with direct-drag panel layout,
+  per-edge waypoint editing, named-slot save/load + 5-minute
+  auto-save (see *Slot persistence & auto-save*), and per-figure
+  walkthroughs under `docs/charts/`.
+- **Phase 4 — Beta.** Project workspace + snapshots + IndexedDB
+  cache; batch export and quality-check engine; live KaTeX editor.
+- **Phase 5 — v1.0.** Tauri-packaged desktop builds for Windows /
+  macOS, memory-stable large-tensor ingestion, public render-jobs
+  API, team-version (auth / audit / RLS).
 
 ---
 
