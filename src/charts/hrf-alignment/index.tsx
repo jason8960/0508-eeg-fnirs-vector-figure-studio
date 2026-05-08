@@ -697,6 +697,48 @@ function HrfAlignmentChart() {
               strokeWidth={0.7}
             />
           ) : null}
+          {/* Event centre guide */}
+          <line
+            x1={axA.x.scale(peakT)}
+            x2={axA.x.scale(peakT)}
+            y1={axA.yTop}
+            y2={axA.yBot}
+            stroke="#444"
+            strokeWidth={0.9}
+            strokeDasharray="4 4"
+            opacity={0.6}
+          />
+          <ForeignText
+            x={axA.x.scale(peakT) - 60}
+            y={axA.yTop - 16}
+            width={120}
+            height={14}
+            value={`event $t_e$`}
+            fontSize={10}
+            align="center"
+          />
+          {/* Channel τ shift markers (peakT + lag for each non-EEG signal) */}
+          {cfg.signals.map((s, i) => {
+            if (i === 0 || !s.visible) return null;
+            const tShift = peakT + s.lag;
+            if (tShift < cfg.tMin || tShift > cfg.tMax) return null;
+            return (
+              <g key={`shift-a-${i}`}>
+                <line
+                  x1={axA.x.scale(tShift)}
+                  x2={axA.x.scale(tShift)}
+                  y1={axA.yBot - 14}
+                  y2={axA.yBot}
+                  stroke={s.color}
+                  strokeWidth={2}
+                />
+                <polygon
+                  points={`${axA.x.scale(tShift) - 4},${axA.yBot - 14} ${axA.x.scale(tShift) + 4},${axA.yBot - 14} ${axA.x.scale(tShift)},${axA.yBot - 20}`}
+                  fill={s.color}
+                />
+              </g>
+            );
+          })}
           {cfg.signals.map((s, i) =>
             s.visible ? (
               <PathLine
@@ -728,6 +770,39 @@ function HrfAlignmentChart() {
               strokeWidth={0.7}
             />
           ) : null}
+          {/* Event centre guide on panel (b) */}
+          <line
+            x1={axB.x.scale(peakT)}
+            x2={axB.x.scale(peakT)}
+            y1={axB.yTop}
+            y2={axB.yBot}
+            stroke="#444"
+            strokeWidth={0.9}
+            strokeDasharray="4 4"
+            opacity={0.6}
+          />
+          {/* After τ correction: residual lag = lag - tau */}
+          {cfg.signals.map((s, i) => {
+            if (i === 0 || !s.visible) return null;
+            const tShift = peakT + Math.max(0, s.lag - s.tau);
+            if (tShift < cfg.tMin || tShift > cfg.tMax) return null;
+            return (
+              <g key={`shift-b-${i}`}>
+                <line
+                  x1={axB.x.scale(tShift)}
+                  x2={axB.x.scale(tShift)}
+                  y1={axB.yBot - 14}
+                  y2={axB.yBot}
+                  stroke={s.color}
+                  strokeWidth={2}
+                />
+                <polygon
+                  points={`${axB.x.scale(tShift) - 4},${axB.yBot - 14} ${axB.x.scale(tShift) + 4},${axB.yBot - 14} ${axB.x.scale(tShift)},${axB.yBot - 20}`}
+                  fill={s.color}
+                />
+              </g>
+            );
+          })}
           {cfg.signals.map((s, i) =>
             s.visible ? (
               <PathLine
@@ -738,6 +813,73 @@ function HrfAlignmentChart() {
               />
             ) : null,
           )}
+
+          {/* Δρ improvement bars — per channel mini bar chart */}
+          {(() => {
+            const items = cfg.signals
+              .map((s, i) => ({ s, i }))
+              .filter((it) => it.i > 0 && it.s.visible);
+            if (items.length === 0) return null;
+            const groupX = PANEL_W.x1 - 220;
+            const groupY = PANEL_B.yBot + 10;
+            const rowH = 18;
+            const labelW = 60;
+            const barMax = 100;
+            return (
+              <g transform={`translate(${groupX}, ${groupY})`}>
+                <rect
+                  x={-8}
+                  y={-12}
+                  width={228}
+                  height={items.length * rowH + 22}
+                  rx={6}
+                  fill="#FAFAFA"
+                  stroke="#CCC"
+                />
+                <ForeignText
+                  x={0}
+                  y={-12}
+                  width={228}
+                  height={14}
+                  value={`$|\\rho|$ before $\\to$ after`}
+                  fontSize={11}
+                  align="left"
+                />
+                {items.map(({ s, i }, k) => {
+                  const rb = Math.abs(pearson(eeg, tracesBefore[i]));
+                  const ra = Math.abs(pearson(eeg, tracesAfter[i]));
+                  const wb = rb * barMax;
+                  const wa = ra * barMax;
+                  const y = k * rowH + 6;
+                  return (
+                    <g key={`drho-${i}`} transform={`translate(0, ${y})`}>
+                      <ForeignText
+                        x={0}
+                        y={-2}
+                        width={labelW}
+                        height={14}
+                        value={s.label.split(' ')[0]}
+                        fontSize={10}
+                        align="left"
+                      />
+                      <rect x={labelW} y={4} width={barMax} height={3} fill="#E5E7EB" />
+                      <rect x={labelW} y={4} width={wb} height={3} fill={s.color} fillOpacity={0.4} />
+                      <rect x={labelW} y={9} width={wa} height={3} fill={s.color} />
+                      <ForeignText
+                        x={labelW + barMax + 4}
+                        y={-2}
+                        width={50}
+                        height={14}
+                        value={`$\\Delta=${(ra - rb >= 0 ? '+' : '') + (ra - rb).toFixed(2)}$`}
+                        fontSize={10}
+                        align="left"
+                      />
+                    </g>
+                  );
+                })}
+              </g>
+            );
+          })()}
 
           {/* Correlation labels */}
           {cfg.showCorr ? (

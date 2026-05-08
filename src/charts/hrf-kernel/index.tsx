@@ -603,6 +603,49 @@ function HrfKernelChart() {
             showGrid={cfg.showGrid}
             axisLabelSize={cfg.axisLabelSize}
           />
+          {/* (a) FWHM bands: a horizontal segment at half-max with arrow caps */}
+          <g>
+            {cfg.curves.map((c, i) => {
+              const fwhm = 2.3548 * cfg.sigma;
+              const x0 = axA.x.scale(c.tau - fwhm / 2);
+              const x1 = axA.x.scale(c.tau + fwhm / 2);
+              const y = axA.y.scale(0.5);
+              return (
+                <g key={`fwhm-${i}`} opacity={0.55}>
+                  <line
+                    x1={x0}
+                    x2={x1}
+                    y1={y}
+                    y2={y}
+                    stroke={c.color}
+                    strokeWidth={1.2}
+                    strokeDasharray="3 3"
+                  />
+                  <line x1={x0} x2={x0} y1={y - 4} y2={y + 4} stroke={c.color} strokeWidth={1.2} />
+                  <line x1={x1} x2={x1} y1={y - 4} y2={y + 4} stroke={c.color} strokeWidth={1.2} />
+                </g>
+              );
+            })}
+          </g>
+          {/* (a) Soft fill under each Gaussian for visual depth */}
+          <g opacity={0.18}>
+            {aSeries.map((pts, i) => {
+              const c = cfg.curves[i];
+              const d = lineA(pts);
+              if (!d) return null;
+              const yBase = axA.y.scale(0);
+              const x0 = axA.x.scale(pts[0].t);
+              const x1 = axA.x.scale(pts[pts.length - 1].t);
+              return (
+                <path
+                  key={`fill-${i}`}
+                  d={`${d} L ${x1} ${yBase} L ${x0} ${yBase} Z`}
+                  fill={c.color}
+                  stroke="none"
+                />
+              );
+            })}
+          </g>
           <g>
             {aSeries.map((pts, i) => {
               const c = cfg.curves[i];
@@ -618,6 +661,51 @@ function HrfKernelChart() {
               ) : null;
             })}
           </g>
+          {/* (a) Peak markers: filled circle + value label */}
+          <g>
+            {cfg.curves.map((c, i) => {
+              const cx = axA.x.scale(c.tau);
+              const cy = axA.y.scale(1.0);
+              return (
+                <g key={`peak-${i}`}>
+                  <line
+                    x1={cx}
+                    x2={cx}
+                    y1={cy}
+                    y2={axA.y.scale(0)}
+                    stroke={c.color}
+                    strokeWidth={0.8}
+                    strokeDasharray="2 3"
+                    opacity={0.55}
+                  />
+                  <circle cx={cx} cy={cy} r={4.2} fill="#fff" stroke={c.color} strokeWidth={1.8} />
+                  <circle cx={cx} cy={cy} r={1.6} fill={c.color} />
+                </g>
+              );
+            })}
+          </g>
+          {/* (a) Stats badge — peak height + FWHM */}
+          <g transform={`translate(${PANEL_A.x1 - 168}, ${PANEL_TOP + 8})`}>
+            <rect width={158} height={48} rx={6} fill="#FAFAFA" stroke="#CCC" />
+            <ForeignText
+              x={6}
+              y={2}
+              width={150}
+              height={20}
+              value={`peak height = $1.0$`}
+              fontSize={11}
+              align="left"
+            />
+            <ForeignText
+              x={6}
+              y={22}
+              width={150}
+              height={20}
+              value={`FWHM $= 2.355\\,s = ${(2.3548 * cfg.sigma).toFixed(2)}$ s`}
+              fontSize={11}
+              align="left"
+            />
+          </g>
 
           {/* Panel (b) */}
           <PanelChrome
@@ -627,7 +715,7 @@ function HrfKernelChart() {
             showGrid={cfg.showGrid}
             axisLabelSize={cfg.axisLabelSize}
           />
-          {/* τ_min / τ_max dashed asymptotes */}
+          {/* τ_min / τ_max dashed asymptotes + labels */}
           <g>
             <line
               x1={axB.x.scale(xRangeB[0])}
@@ -647,6 +735,24 @@ function HrfKernelChart() {
               strokeWidth={1.1}
               strokeDasharray="6 4"
             />
+            <ForeignText
+              x={axB.x.scale(xRangeB[1]) - 70}
+              y={axB.y.scale(cfg.tauMax) - 16}
+              width={70}
+              height={14}
+              value={`$\\tau_{\\max}=${cfg.tauMax.toFixed(1)}$`}
+              fontSize={10}
+              align="right"
+            />
+            <ForeignText
+              x={axB.x.scale(xRangeB[1]) - 70}
+              y={axB.y.scale(cfg.tauMin) + 2}
+              width={70}
+              height={14}
+              value={`$\\tau_{\\min}=${cfg.tauMin.toFixed(1)}$`}
+              fontSize={10}
+              align="right"
+            />
             {(() => {
               const d = lineB(bSeries);
               return d ? (
@@ -658,6 +764,44 @@ function HrfKernelChart() {
                 />
               ) : null;
             })()}
+          </g>
+          {/* (b) Sample dots: τ̃ that maps to each visible τ peak in (a) */}
+          <g>
+            {cfg.curves.map((c, i) => {
+              // invert sigmoid: τ̃ such that σ(τ̃) = (τ - tmin)/(tmax-tmin)
+              const tnorm = (c.tau - cfg.tauMin) / Math.max(1e-6, cfg.tauMax - cfg.tauMin);
+              if (tnorm <= 0 || tnorm >= 1) return null;
+              const tildeTau = Math.log(tnorm / (1 - tnorm));
+              if (tildeTau < xRangeB[0] || tildeTau > xRangeB[1]) return null;
+              const dotX = axB.x.scale(tildeTau);
+              const dotY = axB.y.scale(c.tau);
+              return (
+                <g key={`samp-${i}`}>
+                  <line
+                    x1={axB.x.scale(xRangeB[0])}
+                    x2={dotX}
+                    y1={dotY}
+                    y2={dotY}
+                    stroke={c.color}
+                    strokeWidth={0.8}
+                    strokeDasharray="2 3"
+                    opacity={0.5}
+                  />
+                  <line
+                    x1={dotX}
+                    x2={dotX}
+                    y1={dotY}
+                    y2={axB.y.scale(yRangeB[0])}
+                    stroke={c.color}
+                    strokeWidth={0.8}
+                    strokeDasharray="2 3"
+                    opacity={0.5}
+                  />
+                  <circle cx={dotX} cy={dotY} r={4.2} fill="#fff" stroke={c.color} strokeWidth={1.8} />
+                  <circle cx={dotX} cy={dotY} r={1.6} fill={c.color} />
+                </g>
+              );
+            })}
           </g>
 
           {/* Legend (panel a) */}

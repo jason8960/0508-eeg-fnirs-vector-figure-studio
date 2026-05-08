@@ -677,6 +677,117 @@ function GatingFusionChart() {
             );
           })}
 
+          {/* Per-dim gate heatmap (gate is a vector g ∈ [0,1]^d, here d=16) */}
+          {(() => {
+            const D = 16;
+            const X0 = 60;
+            const Y0 = 470;
+            const cellW = 24;
+            const cellH = 14;
+            // synthesize a deterministic gate vector that averages to cfg.g
+            const seed = Math.round(cfg.g * 1000) | 0;
+            const r = (k: number) => {
+              const x = Math.sin(seed * 12.9898 + k * 78.233) * 43758.5453;
+              return x - Math.floor(x);
+            };
+            const raw = Array.from({ length: D }, (_, i) => cfg.g + (r(i) - 0.5) * 0.4);
+            const clipped = raw.map((v) => Math.max(0.02, Math.min(0.98, v)));
+            const meanG = clipped.reduce((s, v) => s + v, 0) / D;
+            // re-normalise so visual mean matches cfg.g (visual fairness)
+            const adj = clipped.map((v) => Math.max(0.02, Math.min(0.98, v + (cfg.g - meanG))));
+            return (
+              <g>
+                <rect x={X0 - 12} y={Y0 - 26} width={D * cellW + 24} height={cellH + 56} rx={6} fill="#FAFAFA" stroke="#CCC" />
+                <ForeignText
+                  x={X0 - 8}
+                  y={Y0 - 24}
+                  width={D * cellW + 16}
+                  height={16}
+                  value={`per-dim gate $g \\in [0,1]^d$ (d=${D}), $\\bar{g}=${cfg.g.toFixed(2)}$`}
+                  fontSize={11}
+                  fontWeight={600}
+                  align="left"
+                />
+                {adj.map((v, i) => (
+                  <g key={`gd-${i}`}>
+                    <rect
+                      x={X0 + i * cellW}
+                      y={Y0}
+                      width={cellW - 2}
+                      height={cellH}
+                      fill={mixHex(cfg.fnirsStroke, cfg.eegStroke, v)}
+                      stroke="#fff"
+                      strokeWidth={0.6}
+                    />
+                    <ForeignText
+                      x={X0 + i * cellW - 1}
+                      y={Y0 + cellH + 1}
+                      width={cellW}
+                      height={12}
+                      value={v.toFixed(2)}
+                      fontSize={8}
+                      align="center"
+                    />
+                  </g>
+                ))}
+                <ForeignText x={X0 + D * cellW + 4} y={Y0} width={64} height={14} value="$=g_d$" fontSize={11} align="left" />
+              </g>
+            );
+          })()}
+
+          {/* Composition bar: g% EEG | (1-g)% fNIRS */}
+          {(() => {
+            const X0 = 510;
+            const Y0 = 470;
+            const W = 380;
+            const H = 28;
+            const eegW = cfg.g * W;
+            const fnirsW = W - eegW;
+            return (
+              <g>
+                <rect x={X0 - 12} y={Y0 - 26} width={W + 24} height={H + 56} rx={6} fill="#FAFAFA" stroke="#CCC" />
+                <ForeignText
+                  x={X0 - 8}
+                  y={Y0 - 24}
+                  width={W + 16}
+                  height={16}
+                  value={`fusion composition: $g\\,h^E + (1-g)\\,h^F$`}
+                  fontSize={11}
+                  fontWeight={600}
+                  align="left"
+                />
+                <rect x={X0} y={Y0} width={eegW} height={H} fill={cfg.eegStroke} fillOpacity={0.85} />
+                <rect x={X0 + eegW} y={Y0} width={fnirsW} height={H} fill={cfg.fnirsStroke} fillOpacity={0.85} />
+                <ForeignText
+                  x={X0 + 4}
+                  y={Y0 + 6}
+                  width={Math.max(0, eegW - 8)}
+                  height={H - 12}
+                  value={`EEG  ${(cfg.g * 100).toFixed(0)}%`}
+                  fontSize={11}
+                  fontWeight={600}
+                  align="left"
+                  color="white"
+                />
+                <ForeignText
+                  x={X0 + eegW + 4}
+                  y={Y0 + 6}
+                  width={Math.max(0, fnirsW - 8)}
+                  height={H - 12}
+                  value={`fNIRS  ${((1 - cfg.g) * 100).toFixed(0)}%`}
+                  fontSize={11}
+                  fontWeight={600}
+                  align="left"
+                  color="white"
+                />
+                {/* tick marks at 0/0.25/0.5/0.75/1 */}
+                {[0.25, 0.5, 0.75].map((t) => (
+                  <line key={`t-${t}`} x1={X0 + t * W} x2={X0 + t * W} y1={Y0 - 4} y2={Y0 + H + 4} stroke="#444" strokeWidth={0.6} strokeDasharray="2 3" opacity={0.6} />
+                ))}
+              </g>
+            );
+          })()}
+
           {/* Bottom legend */}
           {cfg.showLegend ? (
             <g

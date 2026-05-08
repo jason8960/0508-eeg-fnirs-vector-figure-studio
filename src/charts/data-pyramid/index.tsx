@@ -306,6 +306,10 @@ function DataPyramidChart() {
       return {
         d: `M ${x1},${yTop} L ${x2},${yTop} L ${x3},${yBot} L ${x4},${yBot} z`,
         yMid: (yTop + yBot) / 2,
+        yTop,
+        yBot,
+        halfTop: wTop / 2,
+        halfBot: wBot / 2,
         xRight: Math.max(x2, x3),
         wAtMid: (wTop + wBot) / 2,
       };
@@ -529,9 +533,78 @@ function DataPyramidChart() {
                 stroke={l.stroke}
                 strokeWidth={1.6}
               />
+              {/* Layer level badge on the left */}
+              <g transform={`translate(${cfg.cx - layerGeoms[i].halfTop - 40}, ${layerGeoms[i].yMid - 16})`}>
+                <circle cx={16} cy={16} r={16} fill={l.stroke} stroke="white" strokeWidth={1.6} />
+                <ForeignText
+                  x={0}
+                  y={4}
+                  width={32}
+                  height={24}
+                  value={`L${cfg.layers.length - i}`}
+                  fontSize={13}
+                  fontWeight={700}
+                  align="center"
+                  color="white"
+                />
+              </g>
+              {/* Layer icon on the right */}
+              <g transform={`translate(${cfg.cx + layerGeoms[i].halfTop + 8}, ${layerGeoms[i].yMid - 14})`}>
+                <circle cx={14} cy={14} r={14} fill="white" stroke={l.stroke} strokeWidth={1.6} />
+                {(() => {
+                  // distinct iconographic shapes per layer (data / model / sanity / loop)
+                  const iconColor = l.stroke;
+                  if (i === 0) {
+                    return (
+                      <g>
+                        <rect x={6} y={8} width={4} height={12} fill={iconColor} />
+                        <rect x={12} y={4} width={4} height={16} fill={iconColor} />
+                        <rect x={18} y={10} width={4} height={10} fill={iconColor} />
+                      </g>
+                    );
+                  }
+                  if (i === 1) {
+                    return (
+                      <g>
+                        <circle cx={9} cy={10} r={3} fill={iconColor} />
+                        <circle cx={19} cy={10} r={3} fill={iconColor} />
+                        <circle cx={14} cy={18} r={3} fill={iconColor} />
+                        <line x1={9} y1={10} x2={14} y2={18} stroke={iconColor} strokeWidth={1.4} />
+                        <line x1={19} y1={10} x2={14} y2={18} stroke={iconColor} strokeWidth={1.4} />
+                      </g>
+                    );
+                  }
+                  if (i === 2) {
+                    return (
+                      <g>
+                        <polyline
+                          points="6,18 11,12 16,16 22,8"
+                          fill="none"
+                          stroke={iconColor}
+                          strokeWidth={2}
+                          strokeLinecap="round"
+                          strokeLinejoin="round"
+                        />
+                      </g>
+                    );
+                  }
+                  return (
+                    <g>
+                      <path
+                        d="M 8 14 a 6 6 0 1 1 6 6"
+                        fill="none"
+                        stroke={iconColor}
+                        strokeWidth={2}
+                        strokeLinecap="round"
+                      />
+                      <polygon points="14,16 18,18 14,22" fill={iconColor} />
+                    </g>
+                  );
+                })()}
+              </g>
               <ForeignText
                 x={cfg.cx - 280}
-                y={layerGeoms[i].yMid - 22}
+                y={layerGeoms[i].yMid - 26}
                 width={560}
                 height={26}
                 value={l.title}
@@ -542,7 +615,7 @@ function DataPyramidChart() {
               />
               <ForeignText
                 x={cfg.cx - 280}
-                y={layerGeoms[i].yMid + 4}
+                y={layerGeoms[i].yMid + 0}
                 width={560}
                 height={28}
                 value={l.body}
@@ -550,8 +623,47 @@ function DataPyramidChart() {
                 align="center"
                 color="white"
               />
+              {/* Sample-count badge below the body */}
+              <g transform={`translate(${cfg.cx - 70}, ${layerGeoms[i].yMid + 28})`}>
+                <rect x={0} y={0} width={140} height={18} rx={9} fill="white" fillOpacity={0.85} stroke={l.stroke} strokeWidth={1} />
+                <ForeignText
+                  x={4}
+                  y={2}
+                  width={132}
+                  height={16}
+                  value={(() => {
+                    if (i === 0) return `n=10\u2009240 trials`;
+                    if (i === 1) return `f1=0.86 \u00B1 0.04`;
+                    if (i === 2) return `\u03c1=+0.31 (p<0.01)`;
+                    return `\u0394AUC=+5.1%`;
+                  })()}
+                  fontSize={10}
+                  fontWeight={500}
+                  align="center"
+                  color={l.stroke}
+                />
+              </g>
             </g>
           ))}
+
+          {/* Flow arrows linking adjacent layers */}
+          {cfg.layers.slice(0, -1).map((l, i) => {
+            const fromY = layerGeoms[i].yBot ?? layerGeoms[i].yMid + 30;
+            const toY = layerGeoms[i + 1].yTop ?? layerGeoms[i + 1].yMid - 30;
+            return (
+              <g key={`flow-${l.id}`}>
+                <line
+                  x1={cfg.cx}
+                  x2={cfg.cx}
+                  y1={fromY + 2}
+                  y2={toY - 6}
+                  stroke="#444"
+                  strokeWidth={1.4}
+                  markerEnd="url(#dp-arrow)"
+                />
+              </g>
+            );
+          })}
 
           {/* Right side annotations: arrow from trapezoid right edge to annotation column */}
           {cfg.showAnnotations

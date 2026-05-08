@@ -802,6 +802,125 @@ function GatAttentionChart() {
             </g>
           ) : null}
 
+          {/* α distribution bar chart (softmax over neighbours) */}
+          {(() => {
+            const W = 360;
+            const H = 150;
+            const X0 = 30;
+            const Y0 = 520;
+            const padL = 50;
+            const padR = 18;
+            const padT = 32;
+            const padB = 30;
+            const innerW = W - padL - padR;
+            const innerH = H - padT - padB;
+            const n = cfg.neighbours.length;
+            const barW = innerW / n * 0.7;
+            const gap = innerW / n * 0.3;
+            const sumA = alphas.reduce((s, v) => s + v, 0);
+            const yScale = (v: number) => Y0 + padT + innerH - v * innerH;
+            return (
+              <g>
+                <rect x={X0} y={Y0} width={W} height={H} rx={6} fill="#FAFAFA" stroke="#CCC" />
+                <ForeignText x={X0 + 6} y={Y0 + 6} width={W - 12} height={22} value={`softmax 输出: $\\alpha_{ij}$ 分布 (∑=${sumA.toFixed(3)})`} fontSize={12} fontWeight={600} align="left" />
+                {/* y-axis ticks at 0, 0.25, 0.5, 0.75, 1.0 */}
+                {[0, 0.25, 0.5, 0.75, 1].map((t, k) => (
+                  <g key={`ay-${k}`}>
+                    <line x1={X0 + padL} x2={X0 + W - padR} y1={yScale(t)} y2={yScale(t)} stroke="#E5E7EB" strokeWidth={0.6} />
+                    <ForeignText x={X0 + 4} y={yScale(t) - 8} width={padL - 8} height={14} value={t.toFixed(2)} fontSize={9} align="right" />
+                  </g>
+                ))}
+                {/* Reference line at uniform 1/K */}
+                <line
+                  x1={X0 + padL}
+                  x2={X0 + W - padR}
+                  y1={yScale(1 / n)}
+                  y2={yScale(1 / n)}
+                  stroke="#888"
+                  strokeWidth={0.8}
+                  strokeDasharray="3 3"
+                />
+                <ForeignText
+                  x={X0 + W - padR - 60}
+                  y={yScale(1 / n) - 14}
+                  width={60}
+                  height={12}
+                  value={`uniform $1/K$`}
+                  fontSize={9}
+                  align="right"
+                />
+                {alphas.map((a, i) => {
+                  const xi = X0 + padL + (i + 0.15) * (innerW / n);
+                  const h = a * innerH;
+                  const y = Y0 + padT + innerH - h;
+                  const c = colourOf(a);
+                  const n0 = cfg.neighbours[i];
+                  return (
+                    <g key={`bar-${i}`}>
+                      <rect x={xi} y={y} width={barW} height={h} fill={c} fillOpacity={0.85} stroke={c} strokeWidth={0.8} />
+                      <ForeignText x={xi - gap / 2} y={y - 16} width={barW + gap} height={14} value={a.toFixed(2)} fontSize={9} align="center" />
+                      <ForeignText x={xi - gap / 2} y={Y0 + padT + innerH + 2} width={barW + gap} height={14} value={n0.id} fontSize={10} align="center" />
+                    </g>
+                  );
+                })}
+              </g>
+            );
+          })()}
+
+          {/* Logit→softmax computation panel */}
+          {(() => {
+            const W = 380;
+            const H = 150;
+            const X0 = 410;
+            const Y0 = 520;
+            const ls = cfg.neighbours.map((n) => n.logit);
+            const lmax = Math.max(...ls);
+            const exps = ls.map((l) => Math.exp(l - lmax));
+            const Z = exps.reduce((s, v) => s + v, 0);
+            const rowH = 14;
+            return (
+              <g>
+                <rect x={X0} y={Y0} width={W} height={H} rx={6} fill="#FAFAFA" stroke="#CCC" />
+                <ForeignText
+                  x={X0 + 6}
+                  y={Y0 + 6}
+                  width={W - 12}
+                  height={20}
+                  value="softmax 计算 (numerically stable)"
+                  fontSize={12}
+                  fontWeight={600}
+                  align="left"
+                />
+                <ForeignText
+                  x={X0 + 6}
+                  y={Y0 + 26}
+                  width={W - 12}
+                  height={20}
+                  value={`$\\ell_{\\max}=${lmax.toFixed(2)}$,  $Z = \\sum_k \\exp(\\ell_k - \\ell_{\\max}) = ${Z.toFixed(3)}$`}
+                  fontSize={10}
+                  align="left"
+                />
+                {/* Header */}
+                <ForeignText x={X0 + 8} y={Y0 + 48} width={36} height={12} value="$j_k$" fontSize={9} fontWeight={600} align="center" />
+                <ForeignText x={X0 + 50} y={Y0 + 48} width={64} height={12} value="$\\ell_k$" fontSize={9} fontWeight={600} align="center" />
+                <ForeignText x={X0 + 122} y={Y0 + 48} width={88} height={12} value="$\\exp(\\ell_k - \\ell_{\\max})$" fontSize={9} fontWeight={600} align="center" />
+                <ForeignText x={X0 + 222} y={Y0 + 48} width={150} height={12} value="$\\alpha_k = \\exp(\\cdot)/Z$" fontSize={9} fontWeight={600} align="center" />
+                {cfg.neighbours.map((n, i) => {
+                  const yy = Y0 + 64 + i * rowH;
+                  return (
+                    <g key={`row-${n.id}`}>
+                      <ForeignText x={X0 + 8} y={yy} width={36} height={12} value={n.id} fontSize={9} align="center" />
+                      <ForeignText x={X0 + 50} y={yy} width={64} height={12} value={ls[i].toFixed(2)} fontSize={9} align="center" />
+                      <ForeignText x={X0 + 122} y={yy} width={88} height={12} value={exps[i].toFixed(3)} fontSize={9} align="center" />
+                      <rect x={X0 + 222} y={yy + 3} width={alphas[i] * 130} height={6} fill={colourOf(alphas[i])} fillOpacity={0.85} />
+                      <ForeignText x={X0 + 222 + alphas[i] * 130 + 4} y={yy} width={28} height={12} value={alphas[i].toFixed(2)} fontSize={9} align="left" />
+                    </g>
+                  );
+                })}
+              </g>
+            );
+          })()}
+
           {/* Yellow note */}
           {cfg.showNote ? (
             <g

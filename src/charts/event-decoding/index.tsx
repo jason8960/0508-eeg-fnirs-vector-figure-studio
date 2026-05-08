@@ -628,6 +628,52 @@ function EventDecodingChart() {
 
           {/* Panel (a) — posterior */}
           <PanelChrome ax={axA} xLabel={cfg.axisX} yLabel={cfg.axisYa} showGrid={cfg.showGrid} axisLabelSize={cfg.axisLabelSize} />
+          {/* Ground-truth shaded bands (cfg.segs are the seed bumps = GT) */}
+          {cfg.segs.map((s, i) => {
+            const halfW = s.width * 1.0;
+            const x0 = axA.x.scale(s.centre - halfW);
+            const x1 = axA.x.scale(s.centre + halfW);
+            return (
+              <g key={`gt-${i}`}>
+                <rect
+                  x={x0}
+                  y={axA.yTop}
+                  width={Math.max(0, x1 - x0)}
+                  height={axA.yBot - axA.yTop}
+                  fill="#FFD9A8"
+                  fillOpacity={0.45}
+                />
+                {i === 0 ? (
+                  <ForeignText
+                    x={x0}
+                    y={axA.yTop + 4}
+                    width={Math.max(60, x1 - x0)}
+                    height={14}
+                    value="GT event"
+                    fontSize={9}
+                    align="left"
+                    color="#A37C0E"
+                  />
+                ) : null}
+              </g>
+            );
+          })}
+          {/* Posterior fill under curve */}
+          <g opacity={0.18}>
+            <path
+              d={(() => {
+                const yBase = axA.y.scale(0);
+                let d = `M ${axA.x.scale(times[0])} ${yBase}`;
+                posterior.forEach((v, i) => {
+                  d += ` L ${axA.x.scale(times[i])} ${axA.y.scale(v)}`;
+                });
+                d += ` L ${axA.x.scale(times[posterior.length - 1])} ${yBase} Z`;
+                return d;
+              })()}
+              fill="#1F77B4"
+              stroke="none"
+            />
+          </g>
           <PathLine
             points={posterior.map((v, i) => ({ t: times[i], v }))}
             color="#1F77B4"
@@ -662,31 +708,96 @@ function EventDecodingChart() {
           <BinaryStrip mask={rawMask} times={times} ax={axB} color="#cccccc" yShift={0} height={28} label="raw" labelOffset={-22} />
           <BinaryStrip mask={closedMask} times={times} ax={axB} color="#2CA02C" yShift={36} height={28} label={`closing (${cfg.Wmin.toFixed(1)} s)`} labelOffset={-22} />
 
-          {/* Panel (c) — windows */}
+          {/* Panel (c) — windows with TP / FP / FN colouring */}
           <PanelChrome ax={axC} xLabel={cfg.axisX} yLabel={cfg.axisYc} showGrid={cfg.showGrid} axisLabelSize={cfg.axisLabelSize} />
-          {finalWindows.map((w, i) => (
-            <g key={i}>
-              <rect
-                x={axC.x.scale(w.start)}
-                y={axC.yTop + 16}
-                width={Math.max(2, axC.x.scale(w.end) - axC.x.scale(w.start))}
-                height={axC.yBot - axC.yTop - 32}
-                fill="#9467BD"
-                fillOpacity={0.7}
-                stroke="#5B3989"
-                strokeWidth={1.2}
-              />
-              <ForeignText
-                x={axC.x.scale(w.start)}
-                y={axC.yTop - 6}
-                width={Math.max(40, axC.x.scale(w.end) - axC.x.scale(w.start))}
-                height={20}
-                value={`#${i + 1}: ${w.start.toFixed(1)}–${w.end.toFixed(1)} s`}
-                fontSize={10}
-                align="left"
-              />
-            </g>
-          ))}
+          {/* Compute TP / FP / FN against GT */}
+          {(() => {
+            const gt = cfg.segs.map((s) => ({
+              start: s.centre - s.width,
+              end: s.centre + s.width,
+            }));
+            const overlaps = (a: { start: number; end: number }, b: { start: number; end: number }) =>
+              Math.max(0, Math.min(a.end, b.end) - Math.max(a.start, b.start)) > 0;
+            const detTP: boolean[] = finalWindows.map((w) => gt.some((g) => overlaps(w, g)));
+            const gtHit: boolean[] = gt.map((g) => finalWindows.some((w) => overlaps(w, g)));
+            const TP = detTP.filter(Boolean).length;
+            const FP = detTP.filter((b) => !b).length;
+            const FN = gtHit.filter((b) => !b).length;
+            const precision = TP + FP === 0 ? 0 : TP / (TP + FP);
+            const recall = TP + FN === 0 ? 0 : TP / (TP + FN);
+            const f1 = precision + recall === 0 ? 0 : (2 * precision * recall) / (precision + recall);
+            return (
+              <g>
+                {/* GT band on panel C bottom strip */}
+                {gt.map((g, i) => (
+                  <rect
+                    key={`gtc-${i}`}
+                    x={axC.x.scale(g.start)}
+                    y={axC.yBot - 12}
+                    width={Math.max(2, axC.x.scale(g.end) - axC.x.scale(g.start))}
+                    height={8}
+                    fill={gtHit[i] ? '#2CA02C' : '#D62728'}
+                    fillOpacity={0.85}
+                  />
+                ))}
+                <ForeignText
+                  x={PANEL_W.x0 - 60}
+                  y={axC.yBot - 14}
+                  width={56}
+                  height={12}
+                  value="GT"
+                  fontSize={10}
+                  align="right"
+                  color="#666"
+                />
+                {/* Detected windows: TP green, FP red */}
+                {finalWindows.map((w, i) => (
+                  <g key={`fw-${i}`}>
+                    <rect
+                      x={axC.x.scale(w.start)}
+                      y={axC.yTop + 16}
+                      width={Math.max(2, axC.x.scale(w.end) - axC.x.scale(w.start))}
+                      height={axC.yBot - axC.yTop - 36}
+                      fill={detTP[i] ? '#2CA02C' : '#D62728'}
+                      fillOpacity={0.65}
+                      stroke={detTP[i] ? '#1B6E1B' : '#A0211D'}
+                      strokeWidth={1.2}
+                    />
+                    <ForeignText
+                      x={axC.x.scale(w.start)}
+                      y={axC.yTop - 6}
+                      width={Math.max(50, axC.x.scale(w.end) - axC.x.scale(w.start))}
+                      height={18}
+                      value={`#${i + 1} ${detTP[i] ? 'TP' : 'FP'}: ${w.start.toFixed(1)}\u2013${w.end.toFixed(1)}`}
+                      fontSize={10}
+                      align="left"
+                      color={detTP[i] ? '#1B6E1B' : '#A0211D'}
+                    />
+                  </g>
+                ))}
+                {/* Metrics badge top-right */}
+                <g transform={`translate(${PANEL_W.x1 - 320}, ${PANEL_C.yTop - 28})`}>
+                  <rect x={0} y={-6} width={310} height={26} rx={6} fill="#FAFAFA" stroke="#CCC" />
+                  <ForeignText x={6} y={-4} width={300} height={20} value={`TP=${TP} · FP=${FP} · FN=${FN}`} fontSize={11} fontWeight={600} align="left" />
+                </g>
+                {/* Metrics bars below the windows */}
+                <g transform={`translate(${PANEL_W.x0}, ${PANEL_C.yBot + 12})`}>
+                  {([
+                    ['Precision', precision, '#2CA02C'],
+                    ['Recall', recall, '#1F77B4'],
+                    ['F1', f1, '#9467BD'],
+                  ] as const).map(([name, v, c], k) => (
+                    <g key={k} transform={`translate(${k * 220}, 0)`}>
+                      <ForeignText x={0} y={-2} width={70} height={14} value={String(name)} fontSize={11} fontWeight={600} align="left" />
+                      <rect x={70} y={4} width={120} height={6} fill="#E5E7EB" />
+                      <rect x={70} y={4} width={(v as number) * 120} height={6} fill={c as string} />
+                      <ForeignText x={196} y={-2} width={28} height={14} value={(v as number).toFixed(2)} fontSize={10} align="left" />
+                    </g>
+                  ))}
+                </g>
+              </g>
+            );
+          })()}
 
           {/* Yellow note */}
           {cfg.showNote ? (
