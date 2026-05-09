@@ -19,7 +19,8 @@ import type { ExpertSchema } from '../../components/ExpertPanel';
 import { InspirationPanel } from '../../components/InspirationPanel';
 import { renderInlineLatex } from '../../lib/latex';
 import { registerChart } from '../../registry';
-import { touchSlot, useAutoSave } from '../../lib/useAutoSave';
+import { useEvalChartConfig } from '../../lib/useEvalChartConfig';
+import type { TextOverrideMap } from '../../lib/useTextOverrides';
 
 /* ----------------------------- types -----------------------------------*/
 
@@ -186,6 +187,7 @@ interface SavedConfig {
   panelOverrides: PanelOverrideMap;
   edgeOverrides: EdgeOverrideMap;
   annotations: Annotation[];
+  textOverrides?: TextOverrideMap;
 }
 
 /* ------------------------- color palette -------------------------------*/
@@ -422,42 +424,7 @@ const GAT_CMC_NET_EDGES: EdgeSpec[] = [
 
 /* -------------------------- localStorage -------------------------------*/
 
-const STORAGE_KEY = 'arch-overall-saved-configs-v1';
-type SavedConfigsMap = Record<string, SavedConfig>;
-
-function loadStoredConfigs(): SavedConfigsMap {
-  try {
-    const raw = localStorage.getItem(STORAGE_KEY);
-    if (!raw) return {};
-    const parsed = JSON.parse(raw) as SavedConfigsMap;
-    if (typeof parsed !== 'object' || parsed === null) return {};
-    return parsed;
-  } catch {
-    return {};
-  }
-}
-
-function persistConfigs(map: SavedConfigsMap) {
-  try {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(map));
-  } catch {
-    // Quota exceeded or storage unavailable — silently no-op.
-  }
-}
-
-function downloadJson(filename: string, data: unknown) {
-  const blob = new Blob([JSON.stringify(data, null, 2)], {
-    type: 'application/json;charset=utf-8',
-  });
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement('a');
-  a.href = url;
-  a.download = filename;
-  document.body.appendChild(a);
-  a.click();
-  a.remove();
-  setTimeout(() => URL.revokeObjectURL(url), 1000);
-}
+const STORAGE_KEY = 'architecture-overall-configs-v1';
 
 /* --------------------------- chart impl --------------------------------*/
 
@@ -526,9 +493,6 @@ function ArchitectureOverallChart() {
   const [selectedAnnotationId, setSelectedAnnotationId] = useState<
     string | null
   >(null);
-
-  const [savedConfigs, setSavedConfigs] =
-    useState<SavedConfigsMap>(() => loadStoredConfigs());
 
   /**
    * Sticky pointer to the body line currently being styled. Set when
@@ -761,62 +725,13 @@ function ArchitectureOverallChart() {
     setAnnotations(cfg.annotations ?? []);
   }, []);
 
-  const persistAndSetSlots = useCallback((next: SavedConfigsMap) => {
-    setSavedConfigs(next);
-    persistConfigs(next);
-  }, []);
-
-  const saveConfigToSlot = useCallback(
-    (name: string) => {
-      if (!name.trim()) return;
-      setSavedConfigs((prev) => {
-        const next = { ...prev, [name]: buildCurrentConfig() };
-        persistConfigs(next);
-        return next;
-      });
-      touchSlot(STORAGE_KEY, name);
-    },
-    [buildCurrentConfig],
-  );
-
-  const deleteConfigSlot = useCallback((name: string) => {
-    setSavedConfigs((prev) => {
-      if (!(name in prev)) return prev;
-      const { [name]: _drop, ...rest } = prev;
-      void _drop;
-      persistConfigs(rest);
-      return rest;
-    });
-  }, []);
-
-  // 5-min auto-save + auto-load latest slot on mount.
-  useAutoSave<SavedConfig>({
+  const { renderInspectorSections } = useEvalChartConfig<SavedConfig>({
     storageKey: STORAGE_KEY,
-    current: buildCurrentConfig(),
-    slots: savedConfigs,
-    onPersistSlots: persistAndSetSlots,
-    applyConfig,
+    buildBaseConfig: buildCurrentConfig,
+    applyBaseConfig: applyConfig,
+    filename: 'architecture-overall.config.json',
   });
-
-  const exportConfigToFile = useCallback(() => {
-    downloadJson('architecture-overall.config.json', buildCurrentConfig());
-  }, [buildCurrentConfig]);
-
-  const importConfigFromFile = useCallback(
-    (file: File) => {
-      const reader = new FileReader();
-      reader.onload = () => {
-        try {
-          const cfg = JSON.parse(String(reader.result)) as SavedConfig;
-          applyConfig(cfg);
-        } catch {
-          // ignored — caller surfaces the error via UI state
-        }
-      };
-      reader.readAsText(file);
-    },
-    [applyConfig],
-  );
+  const textRefs = useMemo(() => [], []);
 
   /* ----------------------- resolved data -------------------------------*/
 
@@ -1194,25 +1109,7 @@ function ArchitectureOverallChart() {
             />
           </ControlGroup>
 
-          <ControlGroup
-            label="配置管理"
-            description="把当前所有调节保存为命名配置 / 导出 JSON 文件 / 下次直接载入。"
-          >
-            <ConfigManager
-              savedConfigs={savedConfigs}
-              onSaveSlot={saveConfigToSlot}
-              onLoadSlot={(name) => {
-                const cfg = savedConfigs[name];
-                if (cfg) {
-                  applyConfig(cfg);
-                  touchSlot(STORAGE_KEY, name);
-                }
-              }}
-              onDeleteSlot={deleteConfigSlot}
-              onExport={exportConfigToFile}
-              onImport={importConfigFromFile}
-            />
-          </ControlGroup>
+          {renderInspectorSections(textRefs)}
         </>
       }
       notes={
@@ -2641,121 +2538,6 @@ function AnnotationEditor({
           </div>
         </>
       ) : null}
-    </div>
-  );
-}
-
-/* ------------------------ config manager -----------------------------*/
-
-interface ConfigManagerProps {
-  savedConfigs: SavedConfigsMap;
-  onSaveSlot: (name: string) => void;
-  onLoadSlot: (name: string) => void;
-  onDeleteSlot: (name: string) => void;
-  onExport: () => void;
-  onImport: (file: File) => void;
-}
-
-function ConfigManager({
-  savedConfigs,
-  onSaveSlot,
-  onLoadSlot,
-  onDeleteSlot,
-  onExport,
-  onImport,
-}: ConfigManagerProps) {
-  const [name, setName] = useState('');
-  const [selected, setSelected] = useState<string>('');
-  const fileRef = useRef<HTMLInputElement>(null);
-
-  const slotNames = Object.keys(savedConfigs).sort();
-  const slotOptions = [
-    { value: '', label: '— 选择已保存配置 —' },
-    ...slotNames.map((n) => ({ value: n, label: n })),
-  ];
-
-  return (
-    <div className="space-y-2.5">
-      <label className="flex flex-col gap-1 text-xs text-ink-200">
-        <span>配置名</span>
-        <div className="flex gap-2">
-          <input
-            type="text"
-            value={name}
-            onChange={(e) => setName(e.target.value)}
-            placeholder="例如：fig2-v3"
-            className="flex-1 rounded border border-ink-600 bg-ink-800 px-2 py-1 text-ink-50 focus:border-accent focus:outline-none"
-          />
-          <button
-            type="button"
-            disabled={!name.trim()}
-            onClick={() => {
-              onSaveSlot(name.trim());
-              setName('');
-            }}
-            className="rounded border border-accent bg-accent/20 px-2 py-1 text-[11px] text-ink-50 hover:bg-accent/30 disabled:cursor-not-allowed disabled:opacity-40"
-          >
-            保存当前
-          </button>
-        </div>
-      </label>
-      <Select
-        label="本地配置 slot"
-        value={selected}
-        options={slotOptions}
-        onChange={setSelected}
-      />
-      <div className="flex flex-wrap gap-2">
-        <button
-          type="button"
-          disabled={!selected}
-          onClick={() => onLoadSlot(selected)}
-          className="rounded border border-ink-600 bg-ink-800 px-2 py-1 text-[11px] text-ink-100 hover:bg-ink-700 disabled:cursor-not-allowed disabled:opacity-40"
-        >
-          载入
-        </button>
-        <button
-          type="button"
-          disabled={!selected}
-          onClick={() => {
-            onDeleteSlot(selected);
-            setSelected('');
-          }}
-          className="rounded border border-rose-500/60 bg-rose-500/15 px-2 py-1 text-[11px] text-ink-50 hover:bg-rose-500/25 disabled:cursor-not-allowed disabled:opacity-40"
-        >
-          删除
-        </button>
-      </div>
-      <p className="text-[11px] text-ink-300">
-        本地保存仅在当前浏览器有效；想跨设备复用请用 JSON 文件：
-      </p>
-      <div className="flex flex-wrap gap-2">
-        <button
-          type="button"
-          onClick={onExport}
-          className="rounded border border-ink-600 bg-ink-800 px-2 py-1 text-[11px] text-ink-100 hover:bg-ink-700"
-        >
-          导出 JSON 文件
-        </button>
-        <button
-          type="button"
-          onClick={() => fileRef.current?.click()}
-          className="rounded border border-ink-600 bg-ink-800 px-2 py-1 text-[11px] text-ink-100 hover:bg-ink-700"
-        >
-          导入 JSON 文件
-        </button>
-        <input
-          ref={fileRef}
-          type="file"
-          accept="application/json,.json"
-          className="hidden"
-          onChange={(e) => {
-            const f = e.target.files?.[0];
-            if (f) onImport(f);
-            e.target.value = '';
-          }}
-        />
-      </div>
     </div>
   );
 }
