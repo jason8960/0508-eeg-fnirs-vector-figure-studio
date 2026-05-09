@@ -1,4 +1,4 @@
-import { useMemo, useRef, useState } from 'react';
+import { useCallback, useMemo, useRef, useState } from 'react';
 import { FigureFrame } from '../../components/FigureFrame';
 import { ChartShell } from '../../components/ChartShell';
 import {
@@ -10,6 +10,9 @@ import { getColormap, type ColormapName } from '../../lib/colormaps';
 import type { ExpertSchema } from '../../components/ExpertPanel';
 import { InspirationPanel } from '../../components/InspirationPanel';
 import { registerChart } from '../../registry';
+import { EditableSvgText } from '../../components/EditableSvgText';
+import { useEvalChartConfig } from '../../lib/useEvalChartConfig';
+import type { TextOverrideMap } from '../../lib/useTextOverrides';
 import {
   activationAt,
   buildBrainMesh,
@@ -17,6 +20,19 @@ import {
   rotate,
   type Vec3,
 } from './mesh';
+
+interface SavedConfig {
+  version: 1;
+  yaw: number;
+  pitch: number;
+  colormap: ColormapName;
+  opacity: number;
+  meshLat: number;
+  meshLong: number;
+  textOverrides?: TextOverrideMap;
+}
+
+const STORAGE_KEY = 'cortical-3d-configs-v1';
 
 interface ProjectedTri {
   points: string;
@@ -35,6 +51,34 @@ function CorticalChart() {
   const svgRef = useRef<SVGSVGElement>(null);
 
   const mesh = useMemo(() => buildBrainMesh(meshLat, meshLong), [meshLat, meshLong]);
+
+  const buildBaseConfig = useCallback(
+    (): SavedConfig => ({
+      version: 1,
+      yaw,
+      pitch,
+      colormap,
+      opacity,
+      meshLat,
+      meshLong,
+    }),
+    [yaw, pitch, colormap, opacity, meshLat, meshLong],
+  );
+  const applyBaseConfig = useCallback((cfg: SavedConfig) => {
+    if (!cfg || cfg.version !== 1) return;
+    setYaw(cfg.yaw);
+    setPitch(cfg.pitch);
+    setColormap(cfg.colormap);
+    setOpacity(cfg.opacity);
+    setMeshLat(cfg.meshLat);
+    setMeshLong(cfg.meshLong);
+  }, []);
+  const { textOverrides, renderInspectorSections } = useEvalChartConfig<SavedConfig>({
+    storageKey: STORAGE_KEY,
+    buildBaseConfig,
+    applyBaseConfig,
+    filename: 'cortical-3d-config.json',
+  });
 
   const expertSchema: ExpertSchema = [
     {
@@ -76,6 +120,36 @@ function CorticalChart() {
     y: light.y / lightLen,
     z: light.z / lightLen,
   };
+
+  const titleId = 'title';
+  const captionId = 'caption';
+  const colorbarLabelId = 'colorbar-label';
+  const titleDefault = '3.5D cortical projection · vertex activation';
+  const captionDefault =
+    'Procedural brain mesh with Lambertian shading and perceptually uniform colour.';
+  const colorbarLabelDefault = 'Activation';
+  const titleStyle = textOverrides.resolve(titleId, {
+    text: titleDefault,
+    fontSize: 14,
+    fontWeight: 600,
+  });
+  const captionStyle = textOverrides.resolve(captionId, {
+    text: captionDefault,
+    fontSize: 12,
+  });
+  const colorbarLabelStyle = textOverrides.resolve(colorbarLabelId, {
+    text: colorbarLabelDefault,
+    fontSize: 11,
+    color: '#0d1117',
+  });
+  const textRefs = useMemo(
+    () => [
+      { id: titleId, label: '主标题', defaultText: titleDefault, defaultFontSize: 14, defaultFontWeight: 600 },
+      { id: captionId, label: '说明文字', defaultText: captionDefault, defaultFontSize: 12 },
+      { id: colorbarLabelId, label: '色条标签', defaultText: colorbarLabelDefault, defaultFontSize: 11 },
+    ],
+    [],
+  );
 
   const triangles = useMemo<ProjectedTri[]>(() => {
     const rot = { yaw, pitch };
@@ -210,6 +284,7 @@ function CorticalChart() {
             />
             <ColormapSelect value={colormap} onChange={setColormap} />
           </ControlGroup>
+          {renderInspectorSections(textRefs)}
         </>
       }
       notes={
@@ -224,8 +299,14 @@ function CorticalChart() {
           ref={svgRef}
           width={W}
           height={H + 80}
-          title="3.5D cortical projection · vertex activation"
-          caption="Procedural brain mesh with Lambertian shading and perceptually uniform colour."
+          title={titleStyle.text}
+          caption={captionStyle.text}
+          titleOverride={textOverrides.overrides[titleId]}
+          titleSelected={textOverrides.selectedId === titleId}
+          onSelectTitle={() => textOverrides.selectText(titleId)}
+          captionOverride={textOverrides.overrides[captionId]}
+          captionSelected={textOverrides.selectedId === captionId}
+          onSelectCaption={() => textOverrides.selectText(captionId)}
         >
           {triangles.map((t, i) => (
             <polygon
@@ -268,14 +349,20 @@ function CorticalChart() {
                 {t.toFixed(1)}
               </text>
             ))}
-            <text
-              transform={`translate(54, 160) rotate(-90)`}
+            <EditableSvgText
+              id={colorbarLabelId}
+              x={54}
+              y={160}
+              style={colorbarLabelStyle}
+              rotate={-90}
               textAnchor="middle"
-              fontSize={11}
-              fill="#0d1117"
-            >
-              Activation
-            </text>
+              selected={textOverrides.selectedId === colorbarLabelId}
+              onSelect={(id) => textOverrides.selectText(id)}
+              onMove={(id, dx, dy) =>
+                textOverrides.setOverride(id, { dx, dy })
+              }
+              svgRef={svgRef}
+            />
           </g>
         </FigureFrame>
       }

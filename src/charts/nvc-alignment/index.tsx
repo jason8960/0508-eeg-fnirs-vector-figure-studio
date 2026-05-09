@@ -1,4 +1,4 @@
-import { useMemo, useRef, useState } from 'react';
+import { useCallback, useMemo, useRef, useState } from 'react';
 import { line as d3line, curveMonotoneX } from 'd3';
 import { FigureFrame } from '../../components/FigureFrame';
 import { ChartShell } from '../../components/ChartShell';
@@ -19,6 +19,26 @@ import { useDataset } from '../../lib/useDataset';
 import { DataLoader } from '../../components/DataLoader';
 import { bandpass, decimate, rmsEnvelope } from '../../lib/signal';
 import { registerChart } from '../../registry';
+import { EditableSvgText } from '../../components/EditableSvgText';
+import { useEvalChartConfig } from '../../lib/useEvalChartConfig';
+import type { TextOverrideMap } from '../../lib/useTextOverrides';
+
+interface SavedConfig {
+  version: 1;
+  duration: number;
+  eegFs: number;
+  hrfFs: number;
+  showBands: boolean;
+  eegSeed: number;
+  hboSeed: number;
+  hbrCoupling: number;
+  eegChannel: string;
+  showAlphaEnv: boolean;
+  alphaWinSec: number;
+  textOverrides?: TextOverrideMap;
+}
+
+const STORAGE_KEY = 'nvc-alignment-configs-v1';
 
 interface SeizureBand {
   start: number;
@@ -46,6 +66,42 @@ function NVCChart() {
   const [showAlphaEnv, setShowAlphaEnv] = useState(true);
   const [alphaWinSec, setAlphaWinSec] = useState(1.0);
   const svgRef = useRef<SVGSVGElement>(null);
+
+  const buildBaseConfig = useCallback(
+    (): SavedConfig => ({
+      version: 1,
+      duration,
+      eegFs,
+      hrfFs,
+      showBands,
+      eegSeed,
+      hboSeed,
+      hbrCoupling,
+      eegChannel,
+      showAlphaEnv,
+      alphaWinSec,
+    }),
+    [duration, eegFs, hrfFs, showBands, eegSeed, hboSeed, hbrCoupling, eegChannel, showAlphaEnv, alphaWinSec],
+  );
+  const applyBaseConfig = useCallback((cfg: SavedConfig) => {
+    if (!cfg || cfg.version !== 1) return;
+    setDuration(cfg.duration);
+    setEegFs(cfg.eegFs);
+    setHrfFs(cfg.hrfFs);
+    setShowBands(cfg.showBands);
+    setEegSeed(cfg.eegSeed);
+    setHboSeed(cfg.hboSeed);
+    setHbrCoupling(cfg.hbrCoupling);
+    setEegChannel(cfg.eegChannel);
+    setShowAlphaEnv(cfg.showAlphaEnv);
+    setAlphaWinSec(cfg.alphaWinSec);
+  }, []);
+  const { textOverrides, renderInspectorSections } = useEvalChartConfig<SavedConfig>({
+    storageKey: STORAGE_KEY,
+    buildBaseConfig,
+    applyBaseConfig,
+    filename: 'nvc-alignment-config.json',
+  });
 
   const { status } = useDataset();
   const loaded = status.kind === 'loaded' ? status.dataset : null;
@@ -306,6 +362,63 @@ function NVCChart() {
     .y((d) => hbAxis.scale(d.v))
     .curve(curveMonotoneX);
 
+  const titleId = 'title';
+  const captionId = 'caption';
+  const rightAxisLabelId = 'right-axis-label';
+  const legendEegId = 'legend-eeg';
+  const legendHboId = 'legend-hbo';
+  const legendHbrId = 'legend-hbr';
+  const legendAlphaId = 'legend-alpha';
+  const titleDefault = 'Neurovascular coupling alignment';
+  const captionDefault =
+    'EEG (μV) on the left axis · $\\Delta$HbO/HbR (μmol/L) on the right axis.';
+  const rightAxisLabelDefault = 'ΔHbO/HbR (μmol/L)';
+  const legendEegDefault = 'EEG (μV)';
+  const legendHboDefault = 'ΔHbO';
+  const legendHbrDefault = 'ΔHbR';
+  const legendAlphaDefault = 'α-env (8–13 Hz, norm.)';
+  const titleStyle = textOverrides.resolve(titleId, {
+    text: titleDefault,
+    fontSize: 14,
+    fontWeight: 600,
+  });
+  const captionStyle = textOverrides.resolve(captionId, {
+    text: captionDefault,
+    fontSize: 12,
+  });
+  const rightAxisLabelStyle = textOverrides.resolve(rightAxisLabelId, {
+    text: rightAxisLabelDefault,
+    fontSize: 12,
+  });
+  const legendEegStyle = textOverrides.resolve(legendEegId, {
+    text: legendEegDefault,
+    fontSize: 11,
+  });
+  const legendHboStyle = textOverrides.resolve(legendHboId, {
+    text: legendHboDefault,
+    fontSize: 11,
+  });
+  const legendHbrStyle = textOverrides.resolve(legendHbrId, {
+    text: legendHbrDefault,
+    fontSize: 11,
+  });
+  const legendAlphaStyle = textOverrides.resolve(legendAlphaId, {
+    text: legendAlphaDefault,
+    fontSize: 11,
+  });
+  const textRefs = useMemo(
+    () => [
+      { id: titleId, label: '主标题', defaultText: titleDefault, defaultFontSize: 14, defaultFontWeight: 600 },
+      { id: captionId, label: '说明文字', defaultText: captionDefault, defaultFontSize: 12 },
+      { id: rightAxisLabelId, label: '右轴标签', defaultText: rightAxisLabelDefault, defaultFontSize: 12 },
+      { id: legendEegId, label: '图例：EEG', defaultText: legendEegDefault, defaultFontSize: 11 },
+      { id: legendHboId, label: '图例：HbO', defaultText: legendHboDefault, defaultFontSize: 11 },
+      { id: legendHbrId, label: '图例：HbR', defaultText: legendHbrDefault, defaultFontSize: 11 },
+      { id: legendAlphaId, label: '图例：α包络', defaultText: legendAlphaDefault, defaultFontSize: 11 },
+    ],
+    [],
+  );
+
   return (
     <ChartShell
       dataLoader={<DataLoader />}
@@ -391,6 +504,7 @@ function NVCChart() {
               onChange={setShowBands}
             />
           </ControlGroup>
+          {renderInspectorSections(textRefs)}
         </>
       }
       notes={
@@ -413,8 +527,14 @@ function NVCChart() {
           ref={svgRef}
           width={W}
           height={H + 80}
-          title="Neurovascular coupling alignment"
-          caption={'EEG (μV) on the left axis · $\\Delta$HbO/HbR (μmol/L) on the right axis.'}
+          title={titleStyle.text}
+          caption={captionStyle.text}
+          titleOverride={textOverrides.overrides[titleId]}
+          titleSelected={textOverrides.selectedId === titleId}
+          onSelectTitle={() => textOverrides.selectText(titleId)}
+          captionOverride={textOverrides.overrides[captionId]}
+          captionSelected={textOverrides.selectedId === captionId}
+          onSelectCaption={() => textOverrides.selectText(captionId)}
         >
           <g transform={`translate(${margin.left}, ${margin.top})`}>
             {/* Seizure bands */}
@@ -455,14 +575,20 @@ function NVCChart() {
                   </text>
                 </g>
               ))}
-              <text
-                transform={`translate(48, ${innerH / 2}) rotate(-90)`}
+              <EditableSvgText
+                id={rightAxisLabelId}
+                x={48}
+                y={innerH / 2}
+                style={rightAxisLabelStyle}
+                rotate={-90}
                 textAnchor="middle"
-                fontSize={12}
-                fill="currentColor"
-              >
-                ΔHbO/HbR (μmol/L)
-              </text>
+                selected={textOverrides.selectedId === rightAxisLabelId}
+                onSelect={(id) => textOverrides.selectText(id)}
+                onMove={(id, dx, dy) =>
+                  textOverrides.setOverride(id, { dx, dy })
+                }
+                svgRef={svgRef}
+              />
             </g>
 
             <path d={eegLine(eegPoints) ?? undefined} stroke="#0d1117" strokeWidth={0.7} fill="none" opacity={0.85} />
@@ -484,28 +610,64 @@ function NVCChart() {
               <rect width={220} height={alphaEnvPoints ? 76 : 56} rx={4} fill="white" fillOpacity={0.92} stroke="currentColor" strokeOpacity={0.3} />
               <g transform="translate(10, 18)">
                 <line x1={0} x2={20} y1={0} y2={0} stroke="#0d1117" strokeWidth={0.7} />
-                <text x={26} y={4} fontSize={11} fill="currentColor">
-                  EEG (μV)
-                </text>
+                <EditableSvgText
+                  id={legendEegId}
+                  x={26}
+                  y={4}
+                  style={legendEegStyle}
+                  selected={textOverrides.selectedId === legendEegId}
+                  onSelect={(id) => textOverrides.selectText(id)}
+                  onMove={(id, dx, dy) =>
+                    textOverrides.setOverride(id, { dx, dy })
+                  }
+                  svgRef={svgRef}
+                />
               </g>
               <g transform="translate(10, 36)">
                 <line x1={0} x2={20} y1={0} y2={0} stroke="#dc2626" strokeWidth={2} />
-                <text x={26} y={4} fontSize={11} fill="currentColor">
-                  ΔHbO
-                </text>
+                <EditableSvgText
+                  id={legendHboId}
+                  x={26}
+                  y={4}
+                  style={legendHboStyle}
+                  selected={textOverrides.selectedId === legendHboId}
+                  onSelect={(id) => textOverrides.selectText(id)}
+                  onMove={(id, dx, dy) =>
+                    textOverrides.setOverride(id, { dx, dy })
+                  }
+                  svgRef={svgRef}
+                />
               </g>
               <g transform="translate(120, 36)">
                 <line x1={0} x2={20} y1={0} y2={0} stroke="#1d4ed8" strokeWidth={2} />
-                <text x={26} y={4} fontSize={11} fill="currentColor">
-                  ΔHbR
-                </text>
+                <EditableSvgText
+                  id={legendHbrId}
+                  x={26}
+                  y={4}
+                  style={legendHbrStyle}
+                  selected={textOverrides.selectedId === legendHbrId}
+                  onSelect={(id) => textOverrides.selectText(id)}
+                  onMove={(id, dx, dy) =>
+                    textOverrides.setOverride(id, { dx, dy })
+                  }
+                  svgRef={svgRef}
+                />
               </g>
               {alphaEnvPoints ? (
                 <g transform="translate(10, 56)">
                   <line x1={0} x2={20} y1={0} y2={0} stroke="#16a34a" strokeWidth={1.6} strokeDasharray="4 3" />
-                  <text x={26} y={4} fontSize={11} fill="currentColor">
-                    α-env (8–13 Hz, norm.)
-                  </text>
+                  <EditableSvgText
+                    id={legendAlphaId}
+                    x={26}
+                    y={4}
+                    style={legendAlphaStyle}
+                    selected={textOverrides.selectedId === legendAlphaId}
+                    onSelect={(id) => textOverrides.selectText(id)}
+                    onMove={(id, dx, dy) =>
+                      textOverrides.setOverride(id, { dx, dy })
+                    }
+                    svgRef={svgRef}
+                  />
                 </g>
               ) : null}
             </g>

@@ -1,4 +1,4 @@
-import { useMemo, useRef, useState } from 'react';
+import { useCallback, useMemo, useRef, useState } from 'react';
 import { FigureFrame } from '../../components/FigureFrame';
 import { ChartShell } from '../../components/ChartShell';
 import {
@@ -15,12 +15,30 @@ import { useDataset } from '../../lib/useDataset';
 import { DataLoader } from '../../components/DataLoader';
 import type { ParsedDataset } from '../../workers/dataParser.worker';
 import { registerChart } from '../../registry';
+import { EditableSvgText } from '../../components/EditableSvgText';
+import { useEvalChartConfig } from '../../lib/useEvalChartConfig';
+import type { TextOverrideMap } from '../../lib/useTextOverrides';
 import {
   EEG_10_20,
   FNIRS_OPTODES,
   FNIRS_PAIRS,
   getOptode,
 } from './positions';
+
+interface SavedConfig {
+  version: 1;
+  showEeg: boolean;
+  showFnirs: boolean;
+  eegOpacity: number;
+  colormap: ColormapName;
+  resolution: number;
+  seed: number;
+  showLabels: boolean;
+  frameSec: number;
+  textOverrides?: TextOverrideMap;
+}
+
+const STORAGE_KEY = 'eeg-fnirs-topomap-configs-v1';
 
 interface ScalpField {
   /** Activation values for each EEG electrode, normalised to [-1, 1]. */
@@ -109,6 +127,38 @@ function TopomapChart() {
   const [showLabels, setShowLabels] = useState(true);
   const [frameSec, setFrameSec] = useState(0);
   const svgRef = useRef<SVGSVGElement>(null);
+
+  const buildBaseConfig = useCallback(
+    (): SavedConfig => ({
+      version: 1,
+      showEeg,
+      showFnirs,
+      eegOpacity,
+      colormap,
+      resolution,
+      seed,
+      showLabels,
+      frameSec,
+    }),
+    [showEeg, showFnirs, eegOpacity, colormap, resolution, seed, showLabels, frameSec],
+  );
+  const applyBaseConfig = useCallback((cfg: SavedConfig) => {
+    if (!cfg || cfg.version !== 1) return;
+    setShowEeg(cfg.showEeg);
+    setShowFnirs(cfg.showFnirs);
+    setEegOpacity(cfg.eegOpacity);
+    setColormap(cfg.colormap);
+    setResolution(cfg.resolution);
+    setSeed(cfg.seed);
+    setShowLabels(cfg.showLabels);
+    setFrameSec(cfg.frameSec);
+  }, []);
+  const { textOverrides, renderInspectorSections } = useEvalChartConfig<SavedConfig>({
+    storageKey: STORAGE_KEY,
+    buildBaseConfig,
+    applyBaseConfig,
+    filename: 'eeg-fnirs-topomap-config.json',
+  });
 
   const { status } = useDataset();
   const loaded = status.kind === 'loaded' ? status.dataset : null;
@@ -227,6 +277,49 @@ function TopomapChart() {
   const cellSize = (2 * radius) / resolution;
   const tFromV = (v: number) => 0.5 + v * 0.5;
 
+  const titleId = 'title';
+  const captionId = 'caption';
+  const legendSourceId = 'legend-source';
+  const legendDetectorId = 'legend-detector';
+  const legendPathId = 'legend-path';
+  const titleDefault = 'EEG–fNIRS co-registration topomap';
+  const captionDefault =
+    'Synthetic dipolar scalp field with overlaid 10-20 electrodes and fNIRS optodes.';
+  const legendSourceDefault = 'fNIRS source';
+  const legendDetectorDefault = 'fNIRS detector';
+  const legendPathDefault = 'Photon path (S→D)';
+  const titleStyle = textOverrides.resolve(titleId, {
+    text: titleDefault,
+    fontSize: 14,
+    fontWeight: 600,
+  });
+  const captionStyle = textOverrides.resolve(captionId, {
+    text: captionDefault,
+    fontSize: 12,
+  });
+  const legendSourceStyle = textOverrides.resolve(legendSourceId, {
+    text: legendSourceDefault,
+    fontSize: 11,
+  });
+  const legendDetectorStyle = textOverrides.resolve(legendDetectorId, {
+    text: legendDetectorDefault,
+    fontSize: 11,
+  });
+  const legendPathStyle = textOverrides.resolve(legendPathId, {
+    text: legendPathDefault,
+    fontSize: 11,
+  });
+  const textRefs = useMemo(
+    () => [
+      { id: titleId, label: '主标题', defaultText: titleDefault, defaultFontSize: 14, defaultFontWeight: 600 },
+      { id: captionId, label: '说明文字', defaultText: captionDefault, defaultFontSize: 12 },
+      { id: legendSourceId, label: '图例：光源', defaultText: legendSourceDefault, defaultFontSize: 11 },
+      { id: legendDetectorId, label: '图例：探测器', defaultText: legendDetectorDefault, defaultFontSize: 11 },
+      { id: legendPathId, label: '图例：光子路径', defaultText: legendPathDefault, defaultFontSize: 11 },
+    ],
+    [],
+  );
+
   return (
     <ChartShell
       dataLoader={<DataLoader />}
@@ -313,6 +406,7 @@ function TopomapChart() {
           <ControlGroup label="配色">
             <ColormapSelect value={colormap} onChange={setColormap} />
           </ControlGroup>
+          {renderInspectorSections(textRefs)}
         </>
       }
       notes={
@@ -327,8 +421,14 @@ function TopomapChart() {
           ref={svgRef}
           width={W}
           height={H + 80}
-          title="EEG–fNIRS co-registration topomap"
-          caption="Synthetic dipolar scalp field with overlaid 10-20 electrodes and fNIRS optodes."
+          title={titleStyle.text}
+          caption={captionStyle.text}
+          titleOverride={textOverrides.overrides[titleId]}
+          titleSelected={textOverrides.selectedId === titleId}
+          onSelectTitle={() => textOverrides.selectText(titleId)}
+          captionOverride={textOverrides.overrides[captionId]}
+          captionSelected={textOverrides.selectedId === captionId}
+          onSelectCaption={() => textOverrides.selectText(captionId)}
         >
           <defs>
             <clipPath id="head-clip">
@@ -452,21 +552,48 @@ function TopomapChart() {
           <g transform={`translate(${cx - radius}, ${cy + radius + 32})`}>
             <g>
               <rect x={0} y={-5} width={10} height={10} fill="#dc2626" />
-              <text x={16} y={4} fontSize={11} fill="currentColor">
-                fNIRS source
-              </text>
+              <EditableSvgText
+                id={legendSourceId}
+                x={16}
+                y={4}
+                style={legendSourceStyle}
+                selected={textOverrides.selectedId === legendSourceId}
+                onSelect={(id) => textOverrides.selectText(id)}
+                onMove={(id, dx, dy) =>
+                  textOverrides.setOverride(id, { dx, dy })
+                }
+                svgRef={svgRef}
+              />
             </g>
             <g transform="translate(120, 0)">
               <rect x={0} y={-5} width={10} height={10} fill="#1d4ed8" transform="rotate(45)" />
-              <text x={16} y={4} fontSize={11} fill="currentColor">
-                fNIRS detector
-              </text>
+              <EditableSvgText
+                id={legendDetectorId}
+                x={16}
+                y={4}
+                style={legendDetectorStyle}
+                selected={textOverrides.selectedId === legendDetectorId}
+                onSelect={(id) => textOverrides.selectText(id)}
+                onMove={(id, dx, dy) =>
+                  textOverrides.setOverride(id, { dx, dy })
+                }
+                svgRef={svgRef}
+              />
             </g>
             <g transform="translate(260, 0)">
               <line x1={0} y1={0} x2={20} y2={0} stroke="#fbbf24" strokeWidth={1.5} />
-              <text x={26} y={4} fontSize={11} fill="currentColor">
-                Photon path (S→D)
-              </text>
+              <EditableSvgText
+                id={legendPathId}
+                x={26}
+                y={4}
+                style={legendPathStyle}
+                selected={textOverrides.selectedId === legendPathId}
+                onSelect={(id) => textOverrides.selectText(id)}
+                onMove={(id, dx, dy) =>
+                  textOverrides.setOverride(id, { dx, dy })
+                }
+                svgRef={svgRef}
+              />
             </g>
           </g>
         </FigureFrame>
