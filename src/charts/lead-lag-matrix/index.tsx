@@ -1,4 +1,4 @@
-import { useMemo, useRef, useState } from 'react';
+import { useCallback, useMemo, useRef, useState } from 'react';
 import { FigureFrame } from '../../components/FigureFrame';
 import { ChartShell } from '../../components/ChartShell';
 import {
@@ -15,6 +15,21 @@ import {
 import type { ExpertSchema } from '../../components/ExpertPanel';
 import { InspirationPanel } from '../../components/InspirationPanel';
 import { registerChart } from '../../registry';
+import { useEvalChartConfig } from '../../lib/useEvalChartConfig';
+import type { TextOverrideMap } from '../../lib/useTextOverrides';
+
+interface SavedConfig {
+  version: 1;
+  n: number;
+  colormap: ColormapName;
+  showStars: boolean;
+  lagSeed: number;
+  pSeed: number;
+  showLabels: boolean;
+  textOverrides?: TextOverrideMap;
+}
+
+const STORAGE_KEY = 'lead-lag-matrix-configs-v1';
 
 function regionLabel(i: number, eegCount: number): string {
   if (i < eegCount) return `EEG${(i + 1).toString().padStart(2, '0')}`;
@@ -39,6 +54,34 @@ function LeadLagChart() {
 
   const lags = useMemo(() => generateLeadLagMatrix(lagSeed, n), [lagSeed, n]);
   const pvals = useMemo(() => generateSignificanceMatrix(pSeed, n), [pSeed, n]);
+
+  const buildBaseConfig = useCallback(
+    (): SavedConfig => ({
+      version: 1,
+      n,
+      colormap,
+      showStars,
+      lagSeed,
+      pSeed,
+      showLabels,
+    }),
+    [n, colormap, showStars, lagSeed, pSeed, showLabels],
+  );
+  const applyBaseConfig = useCallback((cfg: SavedConfig) => {
+    if (!cfg || cfg.version !== 1) return;
+    setN(cfg.n);
+    setColormap(cfg.colormap);
+    setShowStars(cfg.showStars);
+    setLagSeed(cfg.lagSeed);
+    setPSeed(cfg.pSeed);
+    setShowLabels(cfg.showLabels);
+  }, []);
+  const { textOverrides, renderInspectorSections } = useEvalChartConfig<SavedConfig>({
+    storageKey: STORAGE_KEY,
+    buildBaseConfig,
+    applyBaseConfig,
+    filename: 'lead-lag-matrix-config.json',
+  });
 
   const expertSchema: ExpertSchema = [
     {
@@ -79,6 +122,26 @@ function LeadLagChart() {
   const max = Math.max(...lags.flat().map(Math.abs));
 
   const cmap = (v: number) => interp(0.5 + v / (2 * max + 1e-9));
+
+  const titleId = 'title';
+  const captionId = 'caption';
+  const titleDefault = 'Cross-modal lead–lag matrix · $\\tau_{ij}$ (s)';
+  const captionDefault = `Synthetic ${n}×${n} lag matrix split between EEG and fNIRS channels.`;
+  const titleStyle = textOverrides.resolve(titleId, {
+    text: titleDefault,
+    fontSize: 14,
+    fontWeight: 600,
+  });
+  const captionStyle = textOverrides.resolve(captionId, {
+    text: captionDefault,
+    fontSize: 12,
+  });
+  const textRefs = useMemo(() => {
+    return [
+      { id: titleId, label: '主标题', defaultText: titleDefault, defaultFontSize: 14, defaultFontWeight: 600 },
+      { id: captionId, label: '说明文字', defaultText: captionDefault, defaultFontSize: 12 },
+    ];
+  }, [titleDefault, captionDefault]);
 
   return (
     <ChartShell
@@ -153,6 +216,7 @@ function LeadLagChart() {
             />
             <ColormapSelect value={colormap} onChange={setColormap} />
           </ControlGroup>
+          {renderInspectorSections(textRefs)}
         </>
       }
       notes={
@@ -167,8 +231,14 @@ function LeadLagChart() {
           ref={svgRef}
           width={W}
           height={H + 80}
-          title={'Cross-modal lead–lag matrix · $\\tau_{ij}$ (s)'}
-          caption={`Synthetic ${n}×${n} lag matrix split between EEG and fNIRS channels.`}
+          title={titleStyle.text}
+          caption={captionStyle.text}
+          titleOverride={textOverrides.overrides[titleId]}
+          titleSelected={textOverrides.selectedId === titleId}
+          onSelectTitle={() => textOverrides.selectText(titleId)}
+          captionOverride={textOverrides.overrides[captionId]}
+          captionSelected={textOverrides.selectedId === captionId}
+          onSelectCaption={() => textOverrides.selectText(captionId)}
         >
           <g transform={`translate(${margin.left}, ${margin.top})`}>
             {lags.map((row, i) =>
