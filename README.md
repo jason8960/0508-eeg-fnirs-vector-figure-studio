@@ -193,7 +193,7 @@ Not yet supported (tracked as Phase 2 follow-ups):
 
 ## Chart catalogue (v2)
 
-All 19 figures ship with a seeded synthetic data generator, a Simple
+All figures ship with a seeded synthetic data generator, a Simple
 inspector (3–5 high-impact controls), an Expert parameter tree (full
 controllable surface, collapsible), and an Inspiration panel (curated
 variant tiles that re-bind several Expert parameters in one click —
@@ -203,7 +203,7 @@ direct-drag panel layout, per-edge waypoint dragging, free-text LaTeX
 annotations, named-slot save/load, JSON import/export, and 5-minute
 auto-save (see *Slot persistence & auto-save*).
 
-### Architecture (8)
+### Architecture (9)
 
 1. **GAT-CMC-Net · 异质图融合癫痫检测** — Fig 1 of the paper. 9-panel
    end-to-end view of the EEG/fNIRS pipeline with embedded vis blocks
@@ -229,6 +229,11 @@ auto-save (see *Slot persistence & auto-save*).
 8. **Spatiotemporal CNN Architecture** — cabinet-projection cube
    sequence visualising `T × C × F` evolution through dilated TCN
    blocks.
+9. **Cross-modal Attention Heatmap (EEG → fNIRS)** — Fig 15. Dense
+   $\alpha^{E\to F} \in [0, 1]^{19 \times 20}$ matrix produced by the
+   cross-modal attention head, with anatomical region brackets
+   (frontal / central-temporal / parieto-occipital) and an optional
+   diagonal trace highlighting the spatial prior.
 
 ### Physiology (3)
 
@@ -248,7 +253,7 @@ auto-save (see *Slot persistence & auto-save*).
 14. **Dynamic Connectivity Chord** — time-sliceable chord diagram of a
     `T × N × N` attention tensor.
 
-### Evaluation (5)
+### Evaluation (9)
 
 15. **ROC + PR curves** — multi-classifier overlay with AUC, AP, and
     bootstrap 95% confidence intervals.
@@ -260,6 +265,20 @@ auto-save (see *Slot persistence & auto-save*).
     per-component accuracy delta.
 19. **Feature Manifold (t-SNE / UMAP)** — class-coloured embedding
     scatter with covariance-derived 95% confidence ellipses.
+20. **Window-length Robustness** — Fig 16. Dual-panel line chart
+    (Event SE / detection latency) over 5–60 s windows; 4 methods,
+    GAT-CMC-Net highlighted with an accent stroke and a Δ annotation
+    at the 10 s lift.
+21. **Multi-method Qualitative Radar** — Fig 17. 7-axis radar (HRF lag,
+    cross-modal, graph operator, interpretability, event-level,
+    LOSO patient-independence, seizure task fit) across 6 methods;
+    baselines dashed, GAT-CMC-Net filled.
+22. **Ablation Bars (LOSO)** — Fig 18. Two grouped-bar panels: Event
+    SE on CHB-MIT vs. TUSZ and FA/h on CHB-MIT for the Full model + 5
+    structural ablations (A1–A5).
+23. **Baseline Comparison Bars** — Fig 19. Three stacked panels
+    (Event SE↑ / FA/h↓ / Latency↓) across 9 baselines + GAT-CMC-Net,
+    with optional error bars and an `Ours` reference line per panel.
 
 ---
 

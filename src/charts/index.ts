@@ -28,4 +28,9 @@ import './gat-attention';
 import './gating-fusion';
 import './data-pyramid';
 import './event-decoding';
+import './cross-modal-heatmap';
+import './window-robustness';
+import './method-radar';
+import './ablation-bars';
+import './baseline-bars';
 
