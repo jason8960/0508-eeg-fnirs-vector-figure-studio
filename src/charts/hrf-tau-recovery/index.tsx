@@ -16,8 +16,9 @@ import {
   type InspirationPreset,
 } from '../../components/InspirationPanel';
 import { registerChart } from '../../registry';
-import { touchSlot, useAutoSave } from '../../lib/useAutoSave';
-import { ConfigManager } from '../../components/ConfigManager';
+import { EditableSvgText } from '../../components/EditableSvgText';
+import { useEvalChartConfig } from '../../lib/useEvalChartConfig';
+import type { TextOverrideMap } from '../../lib/useTextOverrides';
 
 interface ScatterPoint {
   groundTruth: number;
@@ -79,28 +80,10 @@ interface SavedConfig {
   showOurs: boolean;
   lineWidth: number;
   markerSize: number;
+  textOverrides?: TextOverrideMap;
 }
 
 const STORAGE_KEY = 'hrf-tau-recovery-configs-v1';
-
-function loadStoredConfigs(): Record<string, SavedConfig> {
-  try {
-    const raw = localStorage.getItem(STORAGE_KEY);
-    if (!raw) return {};
-    const parsed = JSON.parse(raw) as Record<string, SavedConfig>;
-    return typeof parsed === 'object' && parsed !== null ? parsed : {};
-  } catch {
-    return {};
-  }
-}
-
-function persistConfigs(slots: Record<string, SavedConfig>) {
-  try {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(slots));
-  } catch {
-    // quota / unavailable
-  }
-}
 
 function HrfTauRecoveryChart() {
   const [seed, setSeed] = useState(2024);
@@ -150,13 +133,8 @@ function HrfTauRecoveryChart() {
     return { slope, intercept, r, mae };
   }, [scatterData]);
 
-  // Config management
-  const [savedConfigs, setSavedConfigs] = useState<Record<string, SavedConfig>>(
-    () => loadStoredConfigs(),
-  );
-
-  const buildCurrentConfig = useCallback((): SavedConfig => {
-    return {
+  const buildBaseConfig = useCallback(
+    (): SavedConfig => ({
       version: 1,
       seed,
       nPoints,
@@ -167,10 +145,10 @@ function HrfTauRecoveryChart() {
       showOurs,
       lineWidth,
       markerSize,
-    };
-  }, [seed, nPoints, noiseStd, showIdeal, showFit, showBaseline, showOurs, lineWidth, markerSize]);
-
-  const applyConfig = useCallback((cfg: SavedConfig) => {
+    }),
+    [seed, nPoints, noiseStd, showIdeal, showFit, showBaseline, showOurs, lineWidth, markerSize],
+  );
+  const applyBaseConfig = useCallback((cfg: SavedConfig) => {
     if (!cfg || cfg.version !== 1) return;
     setSeed(cfg.seed);
     setNPoints(cfg.nPoints);
@@ -182,42 +160,13 @@ function HrfTauRecoveryChart() {
     setLineWidth(cfg.lineWidth);
     setMarkerSize(cfg.markerSize);
   }, []);
-
-  const persistAndSetSlots = useCallback((next: Record<string, SavedConfig>) => {
-    setSavedConfigs(next);
-    persistConfigs(next);
-  }, []);
-
-  const saveConfigToSlot = useCallback(
-    (name: string) => {
-      if (!name.trim()) return;
-      setSavedConfigs((prev) => {
-        const next = { ...prev, [name]: buildCurrentConfig() };
-        persistConfigs(next);
-        return next;
-      });
-      touchSlot(STORAGE_KEY, name);
-    },
-    [buildCurrentConfig],
-  );
-
-  const deleteConfigSlot = useCallback((name: string) => {
-    setSavedConfigs((prev) => {
-      if (!(name in prev)) return prev;
-      const rest = { ...prev };
-      delete rest[name];
-      persistConfigs(rest);
-      return rest;
-    });
-  }, []);
-
-  // Auto-save hook
-  useAutoSave<SavedConfig>({
+  const { textOverrides, renderInspectorSections } = useEvalChartConfig<
+    SavedConfig
+  >({
     storageKey: STORAGE_KEY,
-    current: buildCurrentConfig(),
-    slots: savedConfigs,
-    onPersistSlots: persistAndSetSlots,
-    applyConfig,
+    buildBaseConfig,
+    applyBaseConfig,
+    filename: 'hrf-tau-recovery-config.json',
   });
 
   const expertSchema: ExpertSchema = [
@@ -392,6 +341,42 @@ function HrfTauRecoveryChart() {
     .x((d) => d.x)
     .y((d) => d.y);
 
+  const titleId = 'title';
+  const captionId = 'caption';
+  const panelAId = 'panel-a';
+  const panelBId = 'panel-b';
+  const titleDefault = 'L3 应力测试：HRF 时移反推验证';
+  const captionDefault = `Pearson r=${metrics.r.toFixed(3)}, MAE=${metrics.mae.toFixed(2)}s · 合成 fNIRS (seed=${seed})`;
+  const panelADefault = '(a) τ 反推验证 (L3, 合成 fNIRS)';
+  const panelBDefault = '(b) 不同噪声下 τ 恢复准确性';
+  const titleStyle = textOverrides.resolve(titleId, {
+    text: titleDefault,
+    fontSize: 14,
+    fontWeight: 600,
+  });
+  const captionStyle = textOverrides.resolve(captionId, {
+    text: captionDefault,
+    fontSize: 12,
+  });
+  const panelAStyle = textOverrides.resolve(panelAId, {
+    text: panelADefault,
+    fontSize: 13,
+    fontWeight: 600,
+  });
+  const panelBStyle = textOverrides.resolve(panelBId, {
+    text: panelBDefault,
+    fontSize: 13,
+    fontWeight: 600,
+  });
+  const textRefs = useMemo(() => {
+    return [
+      { id: titleId, label: '主标题', defaultText: titleDefault, defaultFontSize: 14, defaultFontWeight: 600 },
+      { id: captionId, label: '说明文字', defaultText: captionDefault, defaultFontSize: 12 },
+      { id: panelAId, label: '面板 A 标题', defaultText: panelADefault, defaultFontSize: 13, defaultFontWeight: 600 },
+      { id: panelBId, label: '面板 B 标题', defaultText: panelBDefault, defaultFontSize: 13, defaultFontWeight: 600 },
+    ];
+  }, [titleDefault, captionDefault]);
+
 
   return (
     <ChartShell
@@ -412,16 +397,7 @@ function HrfTauRecoveryChart() {
             <Toggle label="固定sHRF基线" checked={showBaseline} onChange={setShowBaseline} />
             <Toggle label="我们的方法" checked={showOurs} onChange={setShowOurs} />
           </ControlGroup>
-          <ControlGroup label="配置管理" description="保存/加载/导出配置">
-            <ConfigManager
-              filename="hrf-tau-recovery-config.json"
-              savedConfigs={savedConfigs}
-              buildCurrentConfig={buildCurrentConfig}
-              applyConfig={applyConfig}
-              saveConfigToSlot={saveConfigToSlot}
-              deleteConfigSlot={deleteConfigSlot}
-            />
-          </ControlGroup>
+          {renderInspectorSections(textRefs)}
         </>
       }
       notes={
@@ -436,15 +412,31 @@ function HrfTauRecoveryChart() {
           ref={svgRef}
           width={W}
           height={H + 60}
-          title="L3 应力测试：HRF 时移反推验证"
-          caption={`Pearson r=${metrics.r.toFixed(3)}, MAE=${metrics.mae.toFixed(2)}s · 合成 fNIRS (seed=${seed})`}
+          title={titleStyle.text}
+          caption={captionStyle.text}
+          titleOverride={textOverrides.overrides[titleId]}
+          titleSelected={textOverrides.selectedId === titleId}
+          onSelectTitle={() => textOverrides.selectText(titleId)}
+          captionOverride={textOverrides.overrides[captionId]}
+          captionSelected={textOverrides.selectedId === captionId}
+          onSelectCaption={() => textOverrides.selectText(captionId)}
         >
           <g transform={`translate(${margin.left}, ${margin.top})`}>
             {/* Left panel: Scatter plot */}
             <g>
-              <text x={panelW / 2} y={-16} textAnchor="middle" fontSize={13} fontWeight={600} fill="currentColor">
-                (a) τ 反推验证 (L3, 合成 fNIRS)
-              </text>
+              <EditableSvgText
+                id={panelAId}
+                x={panelW / 2}
+                y={-16}
+                style={panelAStyle}
+                textAnchor="middle"
+                selected={textOverrides.selectedId === panelAId}
+                onSelect={(id) => textOverrides.selectText(id)}
+                onMove={(id, dx, dy) =>
+                  textOverrides.setOverride(id, { dx, dy })
+                }
+                svgRef={svgRef}
+              />
 
               <YAxis axis={scatterYAxis} offset={0} label="学到的 tau-hat (s)" gridExtent={panelW} />
               <XAxis axis={scatterXAxis} offset={panelH} label="Ground-truth tau* (s)" gridExtent={panelH} />
@@ -519,9 +511,19 @@ function HrfTauRecoveryChart() {
 
             {/* Right panel: Noise curve */}
             <g transform={`translate(${panelW + panelGap}, 0)`}>
-              <text x={panelW / 2} y={-16} textAnchor="middle" fontSize={13} fontWeight={600} fill="currentColor">
-                (b) 不同噪声下 τ 恢复准确性
-              </text>
+              <EditableSvgText
+                id={panelBId}
+                x={panelW / 2}
+                y={-16}
+                style={panelBStyle}
+                textAnchor="middle"
+                selected={textOverrides.selectedId === panelBId}
+                onSelect={(id) => textOverrides.selectText(id)}
+                onMove={(id, dx, dy) =>
+                  textOverrides.setOverride(id, { dx, dy })
+                }
+                svgRef={svgRef}
+              />
 
               <YAxis axis={noiseYAxis} offset={0} label="MAE(τ*, τ̂) (s)" gridExtent={panelW} />
               <XAxis axis={noiseXAxis} offset={panelH} label="合成 fNIRS 噪声水平 (Rician σ)" gridExtent={panelH} />

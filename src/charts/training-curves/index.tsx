@@ -16,8 +16,9 @@ import {
   type InspirationPreset,
 } from '../../components/InspirationPanel';
 import { registerChart } from '../../registry';
-import { touchSlot, useAutoSave } from '../../lib/useAutoSave';
-import { ConfigManager } from '../../components/ConfigManager';
+import { EditableSvgText } from '../../components/EditableSvgText';
+import { useEvalChartConfig } from '../../lib/useEvalChartConfig';
+import type { TextOverrideMap } from '../../lib/useTextOverrides';
 
 interface CurveData {
   epochs: number[];
@@ -112,28 +113,10 @@ interface SavedConfig {
   showAuprc: boolean;
   showAuc: boolean;
   lineWidth: number;
+  textOverrides?: TextOverrideMap;
 }
 
 const STORAGE_KEY = 'training-curves-configs-v1';
-
-function loadStoredConfigs(): Record<string, SavedConfig> {
-  try {
-    const raw = localStorage.getItem(STORAGE_KEY);
-    if (!raw) return {};
-    const parsed = JSON.parse(raw) as Record<string, SavedConfig>;
-    return typeof parsed === 'object' && parsed !== null ? parsed : {};
-  } catch {
-    return {};
-  }
-}
-
-function persistConfigs(slots: Record<string, SavedConfig>) {
-  try {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(slots));
-  } catch {
-    // quota / unavailable
-  }
-}
 
 function TrainingCurvesChart() {
   const [seed, setSeed] = useState(2024);
@@ -154,13 +137,8 @@ function TrainingCurvesChart() {
     [seed, nEpochs, convergenceSpeed, overfitDegree],
   );
 
-  // Config management
-  const [savedConfigs, setSavedConfigs] = useState<Record<string, SavedConfig>>(
-    () => loadStoredConfigs(),
-  );
-
-  const buildCurrentConfig = useCallback((): SavedConfig => {
-    return {
+  const buildBaseConfig = useCallback(
+    (): SavedConfig => ({
       version: 1,
       seed,
       nEpochs,
@@ -172,10 +150,10 @@ function TrainingCurvesChart() {
       showAuprc,
       showAuc,
       lineWidth,
-    };
-  }, [seed, nEpochs, convergenceSpeed, overfitDegree, showEarlyStop, showTrainLoss, showValLoss, showAuprc, showAuc, lineWidth]);
-
-  const applyConfig = useCallback((cfg: SavedConfig) => {
+    }),
+    [seed, nEpochs, convergenceSpeed, overfitDegree, showEarlyStop, showTrainLoss, showValLoss, showAuprc, showAuc, lineWidth],
+  );
+  const applyBaseConfig = useCallback((cfg: SavedConfig) => {
     if (!cfg || cfg.version !== 1) return;
     setSeed(cfg.seed);
     setNEpochs(cfg.nEpochs);
@@ -188,42 +166,13 @@ function TrainingCurvesChart() {
     setShowAuc(cfg.showAuc);
     setLineWidth(cfg.lineWidth);
   }, []);
-
-  const persistAndSetSlots = useCallback((next: Record<string, SavedConfig>) => {
-    setSavedConfigs(next);
-    persistConfigs(next);
-  }, []);
-
-  const saveConfigToSlot = useCallback(
-    (name: string) => {
-      if (!name.trim()) return;
-      setSavedConfigs((prev) => {
-        const next = { ...prev, [name]: buildCurrentConfig() };
-        persistConfigs(next);
-        return next;
-      });
-      touchSlot(STORAGE_KEY, name);
-    },
-    [buildCurrentConfig],
-  );
-
-  const deleteConfigSlot = useCallback((name: string) => {
-    setSavedConfigs((prev) => {
-      if (!(name in prev)) return prev;
-      const rest = { ...prev };
-      delete rest[name];
-      persistConfigs(rest);
-      return rest;
-    });
-  }, []);
-
-  // Auto-save hook
-  useAutoSave<SavedConfig>({
+  const { textOverrides, renderInspectorSections } = useEvalChartConfig<
+    SavedConfig
+  >({
     storageKey: STORAGE_KEY,
-    current: buildCurrentConfig(),
-    slots: savedConfigs,
-    onPersistSlots: persistAndSetSlots,
-    applyConfig,
+    buildBaseConfig,
+    applyBaseConfig,
+    filename: 'training-curves-config.json',
   });
 
   const expertSchema: ExpertSchema = [
@@ -396,6 +345,41 @@ function TrainingCurvesChart() {
 
   const lineGen = d3line<number>().x((_, i) => lossXAxis.scale(i));
 
+  const titleId = 'title';
+  const captionId = 'caption';
+  const panelAId = 'panel-a';
+  const panelBId = 'panel-b';
+  const titleDefault = 'GAT-CMC-Net 训练曲线 · CHB-MIT LOSO';
+  const captionDefault = `合成训练过程 (seed=${seed}, epochs=${nEpochs}) · ${showEarlyStop ? `早停@epoch ${data.earlyStopEpoch}` : ''}`;
+  const panelADefault = '(a) 训练 / 验证损失';
+  const panelBDefault = '(b) 验证集 AUPRC / AUC';
+  const titleStyle = textOverrides.resolve(titleId, {
+    text: titleDefault,
+    fontSize: 14,
+    fontWeight: 600,
+  });
+  const captionStyle = textOverrides.resolve(captionId, {
+    text: captionDefault,
+    fontSize: 12,
+  });
+  const panelAStyle = textOverrides.resolve(panelAId, {
+    text: panelADefault,
+    fontSize: 13,
+    fontWeight: 600,
+  });
+  const panelBStyle = textOverrides.resolve(panelBId, {
+    text: panelBDefault,
+    fontSize: 13,
+    fontWeight: 600,
+  });
+  const textRefs = useMemo(() => {
+    return [
+      { id: titleId, label: '主标题', defaultText: titleDefault, defaultFontSize: 14, defaultFontWeight: 600 },
+      { id: captionId, label: '说明文字', defaultText: captionDefault, defaultFontSize: 12 },
+      { id: panelAId, label: '面板 A 标题', defaultText: panelADefault, defaultFontSize: 13, defaultFontWeight: 600 },
+      { id: panelBId, label: '面板 B 标题', defaultText: panelBDefault, defaultFontSize: 13, defaultFontWeight: 600 },
+    ];
+  }, [titleDefault, captionDefault]);
 
   return (
     <ChartShell
@@ -417,16 +401,7 @@ function TrainingCurvesChart() {
             <Toggle label="Val AUC" checked={showAuc} onChange={setShowAuc} />
             <Toggle label="早停标记" checked={showEarlyStop} onChange={setShowEarlyStop} />
           </ControlGroup>
-          <ControlGroup label="配置管理" description="保存/加载/导出配置">
-            <ConfigManager
-              filename="training-curves-config.json"
-              savedConfigs={savedConfigs}
-              buildCurrentConfig={buildCurrentConfig}
-              applyConfig={applyConfig}
-              saveConfigToSlot={saveConfigToSlot}
-              deleteConfigSlot={deleteConfigSlot}
-            />
-          </ControlGroup>
+          {renderInspectorSections(textRefs)}
         </>
       }
       notes={
@@ -441,15 +416,31 @@ function TrainingCurvesChart() {
           ref={svgRef}
           width={W}
           height={H + 60}
-          title="GAT-CMC-Net 训练曲线 · CHB-MIT LOSO"
-          caption={`合成训练过程 (seed=${seed}, epochs=${nEpochs}) · ${showEarlyStop ? `早停@epoch ${data.earlyStopEpoch}` : ''}`}
+          title={titleStyle.text}
+          caption={captionStyle.text}
+          titleOverride={textOverrides.overrides[titleId]}
+          titleSelected={textOverrides.selectedId === titleId}
+          onSelectTitle={() => textOverrides.selectText(titleId)}
+          captionOverride={textOverrides.overrides[captionId]}
+          captionSelected={textOverrides.selectedId === captionId}
+          onSelectCaption={() => textOverrides.selectText(captionId)}
         >
           <g transform={`translate(${margin.left}, ${margin.top})`}>
             {/* Left panel: Loss curves */}
             <g>
-              <text x={panelW / 2} y={-16} textAnchor="middle" fontSize={13} fontWeight={600} fill="currentColor">
-                (a) 训练 / 验证损失
-              </text>
+              <EditableSvgText
+                id={panelAId}
+                x={panelW / 2}
+                y={-16}
+                style={panelAStyle}
+                textAnchor="middle"
+                selected={textOverrides.selectedId === panelAId}
+                onSelect={(id) => textOverrides.selectText(id)}
+                onMove={(id, dx, dy) =>
+                  textOverrides.setOverride(id, { dx, dy })
+                }
+                svgRef={svgRef}
+              />
 
               <YAxis axis={lossYAxis} offset={0} label="Loss" gridExtent={panelW} />
               <XAxis axis={lossXAxis} offset={panelH} label="Epoch" gridExtent={panelH} />
@@ -495,9 +486,19 @@ function TrainingCurvesChart() {
 
             {/* Right panel: Metric curves */}
             <g transform={`translate(${panelW + panelGap}, 0)`}>
-              <text x={panelW / 2} y={-16} textAnchor="middle" fontSize={13} fontWeight={600} fill="currentColor">
-                (b) 验证集 AUPRC / AUC
-              </text>
+              <EditableSvgText
+                id={panelBId}
+                x={panelW / 2}
+                y={-16}
+                style={panelBStyle}
+                textAnchor="middle"
+                selected={textOverrides.selectedId === panelBId}
+                onSelect={(id) => textOverrides.selectText(id)}
+                onMove={(id, dx, dy) =>
+                  textOverrides.setOverride(id, { dx, dy })
+                }
+                svgRef={svgRef}
+              />
 
               <YAxis axis={metricYAxis} offset={0} label="指标" gridExtent={panelW} />
               <XAxis axis={metricXAxis} offset={panelH} label="Epoch" gridExtent={panelH} />
