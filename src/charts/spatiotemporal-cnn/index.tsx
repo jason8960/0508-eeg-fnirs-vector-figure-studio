@@ -1,4 +1,4 @@
-import { useMemo, useRef, useState } from 'react';
+import { useCallback, useMemo, useRef, useState } from 'react';
 import { FigureFrame } from '../../components/FigureFrame';
 import { ChartShell } from '../../components/ChartShell';
 import {
@@ -10,6 +10,20 @@ import { sampleColormap, type ColormapName } from '../../lib/colormaps';
 import type { ExpertSchema } from '../../components/ExpertPanel';
 import { InspirationPanel } from '../../components/InspirationPanel';
 import { registerChart } from '../../registry';
+import { EditableSvgText } from '../../components/EditableSvgText';
+import { useEvalChartConfig } from '../../lib/useEvalChartConfig';
+import type { TextOverrideMap } from '../../lib/useTextOverrides';
+
+interface SavedConfig {
+  version: 1;
+  colormap: ColormapName;
+  gap: number;
+  showShapes: boolean;
+  scaleW: number;
+  textOverrides?: TextOverrideMap;
+}
+
+const STORAGE_KEY = 'spatiotemporal-cnn-configs-v1';
 
 interface CubeSpec {
   T: number;
@@ -82,6 +96,30 @@ function SpatiotemporalCnn() {
   const [scaleW, setScaleW] = useState(80);
   const svgRef = useRef<SVGSVGElement>(null);
 
+  const buildBaseConfig = useCallback(
+    (): SavedConfig => ({
+      version: 1,
+      colormap,
+      gap,
+      showShapes,
+      scaleW,
+    }),
+    [colormap, gap, showShapes, scaleW],
+  );
+  const applyBaseConfig = useCallback((cfg: SavedConfig) => {
+    if (!cfg || cfg.version !== 1) return;
+    setColormap(cfg.colormap);
+    setGap(cfg.gap);
+    setShowShapes(cfg.showShapes);
+    setScaleW(cfg.scaleW);
+  }, []);
+  const { textOverrides, renderInspectorSections } = useEvalChartConfig<SavedConfig>({
+    storageKey: STORAGE_KEY,
+    buildBaseConfig,
+    applyBaseConfig,
+    filename: 'spatiotemporal-cnn-config.json',
+  });
+
   const expertSchema: ExpertSchema = [
     {
       label: '布局',
@@ -117,6 +155,46 @@ function SpatiotemporalCnn() {
     const Fmax = Math.max(...LAYERS.map((l) => l.F));
     return { Tmax, Cmax, Fmax };
   }, []);
+
+  const titleId = 'title';
+  const captionId = 'caption';
+  const titleDefault = 'Spatiotemporal CNN architecture · $T \\times C \\times F$';
+  const captionDefault =
+    'Cabinet projection. Dilation factors increase exponentially in the temporal axis.';
+  const titleStyle = textOverrides.resolve(titleId, {
+    text: titleDefault,
+    fontSize: 14,
+    fontWeight: 600,
+  });
+  const captionStyle = textOverrides.resolve(captionId, {
+    text: captionDefault,
+    fontSize: 12,
+  });
+  const textRefs = useMemo(
+    () => {
+      const refs: Array<{
+        id: string;
+        label: string;
+        defaultText: string;
+        defaultFontSize: number;
+        defaultFontWeight?: number;
+      }> = [
+        { id: titleId, label: '主标题', defaultText: titleDefault, defaultFontSize: 14, defaultFontWeight: 600 },
+        { id: captionId, label: '说明文字', defaultText: captionDefault, defaultFontSize: 12 },
+      ];
+      LAYERS.forEach((l) => {
+        refs.push({
+          id: `layer-${l.label}`,
+          label: `层名：${l.label}`,
+          defaultText: l.label,
+          defaultFontSize: 11,
+          defaultFontWeight: 600,
+        });
+      });
+      return refs;
+    },
+    [],
+  );
 
   // Layout cubes left-to-right.
   const layout = useMemo(() => {
@@ -199,6 +277,7 @@ function SpatiotemporalCnn() {
           <ControlGroup label="配色">
             <ColormapSelect value={colormap} onChange={setColormap} />
           </ControlGroup>
+          {renderInspectorSections(textRefs)}
         </>
       }
       notes={
@@ -213,23 +292,41 @@ function SpatiotemporalCnn() {
           ref={svgRef}
           width={W}
           height={H + 80}
-          title={'Spatiotemporal CNN architecture · $T \\times C \\times F$'}
-          caption="Cabinet projection. Dilation factors increase exponentially in the temporal axis."
+          title={titleStyle.text}
+          caption={captionStyle.text}
+          titleOverride={textOverrides.overrides[titleId]}
+          titleSelected={textOverrides.selectedId === titleId}
+          onSelectTitle={() => textOverrides.selectText(titleId)}
+          captionOverride={textOverrides.overrides[captionId]}
+          captionSelected={textOverrides.selectedId === captionId}
+          onSelectCaption={() => textOverrides.selectText(captionId)}
         >
-          {layout.map((l, i) => (
+          {layout.map((l, i) => {
+            const layer = LAYERS[i];
+            const layerId = `layer-${layer.label}`;
+            const layerLabelStyle = textOverrides.resolve(layerId, {
+              text: layer.label,
+              fontSize: 11,
+              fontWeight: 600,
+              color: '#0d1117',
+            });
+            return (
             <g key={i}>
               <IsometricCube x={l.x} y={l.y} w={l.w} h={l.h} d={l.d} fill={palette[i]} />
               {/* Layer label */}
-              <text
+              <EditableSvgText
+                id={layerId}
                 x={l.x + l.w / 2}
                 y={l.y - 16}
+                style={layerLabelStyle}
                 textAnchor="middle"
-                fontSize={11}
-                fontWeight={600}
-                fill="#0d1117"
-              >
-                {LAYERS[i].label}
-              </text>
+                selected={textOverrides.selectedId === layerId}
+                onSelect={(id) => textOverrides.selectText(id)}
+                onMove={(id, dx, dy) =>
+                  textOverrides.setOverride(id, { dx, dy })
+                }
+                svgRef={svgRef}
+              />
               {showShapes ? (
                 <text
                   x={l.x + l.w / 2}
@@ -253,7 +350,8 @@ function SpatiotemporalCnn() {
                 />
               ) : null}
             </g>
-          ))}
+            );
+          })}
           <defs>
             <marker id="st-arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto">
               <path d="M0,0 L10,5 L0,10 Z" fill="#0d1117" />

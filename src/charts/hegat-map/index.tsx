@@ -1,4 +1,4 @@
-import { useMemo, useRef, useState } from 'react';
+import { useCallback, useMemo, useRef, useState } from 'react';
 import {
   forceCenter,
   forceLink,
@@ -20,6 +20,23 @@ import { getColormap, type ColormapName } from '../../lib/colormaps';
 import type { ExpertSchema } from '../../components/ExpertPanel';
 import { InspirationPanel } from '../../components/InspirationPanel';
 import { registerChart } from '../../registry';
+import { EditableSvgText } from '../../components/EditableSvgText';
+import { useEvalChartConfig } from '../../lib/useEvalChartConfig';
+import type { TextOverrideMap } from '../../lib/useTextOverrides';
+
+interface SavedConfig {
+  version: 1;
+  eegN: number;
+  fnirsN: number;
+  density: number;
+  colormap: ColormapName;
+  showLabels: boolean;
+  seed: number;
+  iterations: number;
+  textOverrides?: TextOverrideMap;
+}
+
+const STORAGE_KEY = 'hegat-map-configs-v1';
 
 interface GraphNode {
   id: string;
@@ -78,6 +95,36 @@ function HeGATChart() {
   const [seed, setSeed] = useState(7);
   const [iterations, setIterations] = useState(250);
   const svgRef = useRef<SVGSVGElement>(null);
+
+  const buildBaseConfig = useCallback(
+    (): SavedConfig => ({
+      version: 1,
+      eegN,
+      fnirsN,
+      density,
+      colormap,
+      showLabels,
+      seed,
+      iterations,
+    }),
+    [eegN, fnirsN, density, colormap, showLabels, seed, iterations],
+  );
+  const applyBaseConfig = useCallback((cfg: SavedConfig) => {
+    if (!cfg || cfg.version !== 1) return;
+    setEegN(cfg.eegN);
+    setFnirsN(cfg.fnirsN);
+    setDensity(cfg.density);
+    setColormap(cfg.colormap);
+    setShowLabels(cfg.showLabels);
+    setSeed(cfg.seed);
+    setIterations(cfg.iterations);
+  }, []);
+  const { textOverrides, renderInspectorSections } = useEvalChartConfig<SavedConfig>({
+    storageKey: STORAGE_KEY,
+    buildBaseConfig,
+    applyBaseConfig,
+    filename: 'hegat-map-config.json',
+  });
 
   const { nodes, links } = useMemo(
     () => generateGraph(seed, eegN, fnirsN, density),
@@ -146,6 +193,42 @@ function HeGATChart() {
   }, [nodes, links, cx, cy, iterations]);
 
   const posIndex = new Map(positions.map((p) => [p.id, p]));
+
+  const titleId = 'title';
+  const captionId = 'caption';
+  const legendEegId = 'legend-eeg';
+  const legendFnirsId = 'legend-fnirs';
+  const titleDefault = 'Heterogeneous Graph Attention Network · $\\alpha_{ij}$ edges';
+  const captionDefault =
+    'EEG (○) ↔ fNIRS (△) bipartite-leaning graph with deterministic D3 force layout.';
+  const legendEegDefault = 'EEG electrode';
+  const legendFnirsDefault = 'fNIRS channel';
+  const titleStyle = textOverrides.resolve(titleId, {
+    text: titleDefault,
+    fontSize: 14,
+    fontWeight: 600,
+  });
+  const captionStyle = textOverrides.resolve(captionId, {
+    text: captionDefault,
+    fontSize: 12,
+  });
+  const legendEegStyle = textOverrides.resolve(legendEegId, {
+    text: legendEegDefault,
+    fontSize: 11,
+  });
+  const legendFnirsStyle = textOverrides.resolve(legendFnirsId, {
+    text: legendFnirsDefault,
+    fontSize: 11,
+  });
+  const textRefs = useMemo(
+    () => [
+      { id: titleId, label: '主标题', defaultText: titleDefault, defaultFontSize: 14, defaultFontWeight: 600 },
+      { id: captionId, label: '说明文字', defaultText: captionDefault, defaultFontSize: 12 },
+      { id: legendEegId, label: '图例：EEG', defaultText: legendEegDefault, defaultFontSize: 11 },
+      { id: legendFnirsId, label: '图例：fNIRS', defaultText: legendFnirsDefault, defaultFontSize: 11 },
+    ],
+    [],
+  );
 
   return (
     <ChartShell
@@ -238,6 +321,7 @@ function HeGATChart() {
             <Toggle label="显示节点标签" checked={showLabels} onChange={setShowLabels} />
             <ColormapSelect value={colormap} onChange={setColormap} />
           </ControlGroup>
+          {renderInspectorSections(textRefs)}
         </>
       }
       notes={
@@ -253,8 +337,14 @@ function HeGATChart() {
           ref={svgRef}
           width={W}
           height={H + 80}
-          title={'Heterogeneous Graph Attention Network · $\\alpha_{ij}$ edges'}
-          caption={`EEG (○) ↔ fNIRS (△) bipartite-leaning graph with deterministic D3 force layout.`}
+          title={titleStyle.text}
+          caption={captionStyle.text}
+          titleOverride={textOverrides.overrides[titleId]}
+          titleSelected={textOverrides.selectedId === titleId}
+          onSelectTitle={() => textOverrides.selectText(titleId)}
+          captionOverride={textOverrides.overrides[captionId]}
+          captionSelected={textOverrides.selectedId === captionId}
+          onSelectCaption={() => textOverrides.selectText(captionId)}
         >
           {/* Edges */}
           <g>
@@ -310,11 +400,33 @@ function HeGATChart() {
             <rect width={210} height={48} rx={4} fill="white" fillOpacity={0.92} stroke="currentColor" strokeOpacity={0.3} />
             <g transform="translate(14, 16)">
               <circle r={6} fill="white" stroke="#0d1117" strokeWidth={1.5} />
-              <text x={14} y={4} fontSize={11} fill="currentColor">EEG electrode</text>
+              <EditableSvgText
+                id={legendEegId}
+                x={14}
+                y={4}
+                style={legendEegStyle}
+                selected={textOverrides.selectedId === legendEegId}
+                onSelect={(id) => textOverrides.selectText(id)}
+                onMove={(id, dx, dy) =>
+                  textOverrides.setOverride(id, { dx, dy })
+                }
+                svgRef={svgRef}
+              />
             </g>
             <g transform="translate(14, 36)">
               <polygon points="0,-7 7,5 -7,5" fill="white" stroke="#0d1117" strokeWidth={1.5} />
-              <text x={14} y={4} fontSize={11} fill="currentColor">fNIRS channel</text>
+              <EditableSvgText
+                id={legendFnirsId}
+                x={14}
+                y={4}
+                style={legendFnirsStyle}
+                selected={textOverrides.selectedId === legendFnirsId}
+                onSelect={(id) => textOverrides.selectText(id)}
+                onMove={(id, dx, dy) =>
+                  textOverrides.setOverride(id, { dx, dy })
+                }
+                svgRef={svgRef}
+              />
             </g>
           </g>
         </FigureFrame>
