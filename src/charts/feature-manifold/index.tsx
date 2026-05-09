@@ -1,4 +1,4 @@
-import { useMemo, useRef, useState } from 'react';
+import { useCallback, useMemo, useRef, useState } from 'react';
 import { FigureFrame } from '../../components/FigureFrame';
 import { ChartShell } from '../../components/ChartShell';
 import {
@@ -15,10 +15,26 @@ import type { ExpertSchema } from '../../components/ExpertPanel';
 import { InspirationPanel } from '../../components/InspirationPanel';
 import { registerChart } from '../../registry';
 import { computeConfidenceEllipse } from './ellipse';
+import { EditableSvgText } from '../../components/EditableSvgText';
+import { useEvalChartConfig } from '../../lib/useEvalChartConfig';
+import type { TextOverrideMap } from '../../lib/useTextOverrides';
 
 type Embedding = 'tsne-like' | 'umap-like';
 
 const CLASS_LABELS = ['Inter-ictal', 'Pre-ictal', 'Ictal', 'Post-ictal'];
+
+const STORAGE_KEY = 'feature-manifold-configs-v1';
+
+interface SavedConfig {
+  version: 1;
+  perClass: number;
+  spread: number;
+  showEllipses: boolean;
+  embedding: Embedding;
+  seedOverride: number | null;
+  pointRadius: number;
+  textOverrides?: TextOverrideMap;
+}
 
 function FeatureManifold() {
   const [perClass, setPerClass] = useState(220);
@@ -28,6 +44,36 @@ function FeatureManifold() {
   const [seedOverride, setSeedOverride] = useState<number | null>(null);
   const [pointRadius, setPointRadius] = useState(2.4);
   const svgRef = useRef<SVGSVGElement>(null);
+
+  const buildBaseConfig = useCallback(
+    (): SavedConfig => ({
+      version: 1,
+      perClass,
+      spread,
+      showEllipses,
+      embedding,
+      seedOverride,
+      pointRadius,
+    }),
+    [perClass, spread, showEllipses, embedding, seedOverride, pointRadius],
+  );
+  const applyBaseConfig = useCallback((cfg: SavedConfig) => {
+    if (!cfg || cfg.version !== 1) return;
+    setPerClass(cfg.perClass);
+    setSpread(cfg.spread);
+    setShowEllipses(cfg.showEllipses);
+    setEmbedding(cfg.embedding);
+    setSeedOverride(cfg.seedOverride);
+    setPointRadius(cfg.pointRadius);
+  }, []);
+  const { textOverrides, renderInspectorSections } = useEvalChartConfig<
+    SavedConfig
+  >({
+    storageKey: STORAGE_KEY,
+    buildBaseConfig,
+    applyBaseConfig,
+    filename: 'feature-manifold-config.json',
+  });
 
   const seed = seedOverride ?? (embedding === 'umap-like' ? 19 : 23);
   const points = useMemo(
@@ -93,6 +139,40 @@ function FeatureManifold() {
       return computeConfidenceEllipse(cls);
     });
   }, [points]);
+
+  const titleId = 'title';
+  const captionId = 'caption';
+  const titleDefault = `Feature manifold · ${embedding === 'umap-like' ? 'UMAP-like' : 't-SNE-like'} embedding`;
+  const titleStyle = textOverrides.resolve(titleId, {
+    text: titleDefault,
+    fontSize: 14,
+    fontWeight: 600,
+  });
+  const captionStyle = textOverrides.resolve(captionId, {
+    text: 'Synthetic clusters; coordinates are unitless. Marker = sample.',
+    fontSize: 12,
+  });
+  const textRefs = useMemo(() => {
+    const refs: Array<{
+      id: string;
+      label: string;
+      defaultText: string;
+      defaultFontSize: number;
+      defaultFontWeight?: number;
+    }> = [
+      { id: titleId, label: '主标题', defaultText: titleDefault, defaultFontSize: 14, defaultFontWeight: 600 },
+      { id: captionId, label: '说明文字', defaultText: 'Synthetic clusters; coordinates are unitless. Marker = sample.', defaultFontSize: 12 },
+    ];
+    CLASS_LABELS.forEach((l) => {
+      refs.push({
+        id: `legend-${l}`,
+        label: `图例：${l}`,
+        defaultText: l,
+        defaultFontSize: 11,
+      });
+    });
+    return refs;
+  }, [titleDefault]);
 
   return (
     <ChartShell
@@ -182,6 +262,7 @@ function FeatureManifold() {
               onChange={setShowEllipses}
             />
           </ControlGroup>
+          {renderInspectorSections(textRefs)}
         </>
       }
       notes={
@@ -195,8 +276,14 @@ function FeatureManifold() {
           ref={svgRef}
           width={W}
           height={H + 80}
-          title={`Feature manifold · ${embedding === 'umap-like' ? 'UMAP-like' : 't-SNE-like'} embedding`}
-          caption="Synthetic clusters; coordinates are unitless. Marker = sample."
+          title={titleStyle.text}
+          caption={captionStyle.text}
+          titleOverride={textOverrides.overrides[titleId]}
+          titleSelected={textOverrides.selectedId === titleId}
+          onSelectTitle={() => textOverrides.selectText(titleId)}
+          captionOverride={textOverrides.overrides[captionId]}
+          captionSelected={textOverrides.selectedId === captionId}
+          onSelectCaption={() => textOverrides.selectText(captionId)}
         >
           <g transform={`translate(${margin.left}, ${margin.top})`}>
             <YAxis axis={yAxis} offset={0} label="dim 2" gridExtent={innerW} />
@@ -243,14 +330,31 @@ function FeatureManifold() {
                 stroke="currentColor"
                 strokeOpacity={0.3}
               />
-              {CLASS_LABELS.map((l, i) => (
-                <g key={l} transform={`translate(10, ${(i + 0.7) * 18})`}>
-                  <circle r={5} fill={palette[i]} />
-                  <text x={14} y={4} fontSize={11} fill="currentColor">
-                    {l}
-                  </text>
-                </g>
-              ))}
+              {CLASS_LABELS.map((l, i) => {
+                const id = `legend-${l}`;
+                const style = textOverrides.resolve(id, {
+                  text: l,
+                  fontSize: 11,
+                });
+                return (
+                  <g key={l} transform={`translate(10, ${(i + 0.7) * 18})`}>
+                    <circle r={5} fill={palette[i]} />
+                    <EditableSvgText
+                      id={id}
+                      x={14}
+                      y={4}
+                      style={style}
+                      textAnchor="start"
+                      selected={textOverrides.selectedId === id}
+                      onSelect={(idd) => textOverrides.selectText(idd)}
+                      onMove={(idd, dx, dy) =>
+                        textOverrides.setOverride(idd, { dx, dy })
+                      }
+                      svgRef={svgRef}
+                    />
+                  </g>
+                );
+              })}
             </g>
           </g>
         </FigureFrame>

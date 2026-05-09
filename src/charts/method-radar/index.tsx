@@ -1,4 +1,4 @@
-import { useMemo, useRef, useState } from 'react';
+import { useCallback, useMemo, useRef, useState } from 'react';
 import { FigureFrame } from '../../components/FigureFrame';
 import { ChartShell } from '../../components/ChartShell';
 import {
@@ -11,6 +11,9 @@ import { sampleColormap, type ColormapName } from '../../lib/colormaps';
 import type { ExpertSchema } from '../../components/ExpertPanel';
 import { InspirationPanel } from '../../components/InspirationPanel';
 import { registerChart } from '../../registry';
+import { EditableSvgText } from '../../components/EditableSvgText';
+import { useEvalChartConfig } from '../../lib/useEvalChartConfig';
+import type { TextOverrideMap } from '../../lib/useTextOverrides';
 
 /**
  * Multi-method qualitative radar plot.
@@ -76,6 +79,20 @@ const METHODS: MethodSpec[] = [
 ];
 
 const ACCENT = '#f97316';
+const STORAGE_KEY = 'method-radar-configs-v1';
+
+interface SavedConfig {
+  version: 1;
+  showLegend: boolean;
+  showLabels: boolean;
+  showRings: boolean;
+  showAxesGrid: boolean;
+  outerRadius: number;
+  colormap: ColormapName;
+  highlightOnly: boolean;
+  opacityOurs: number;
+  textOverrides?: TextOverrideMap;
+}
 
 function MethodRadar() {
   const [showLegend, setShowLegend] = useState(true);
@@ -87,6 +104,50 @@ function MethodRadar() {
   const [highlightOnly, setHighlightOnly] = useState(false);
   const [opacityOurs, setOpacityOurs] = useState(0.32);
   const svgRef = useRef<SVGSVGElement>(null);
+
+  const buildBaseConfig = useCallback(
+    (): SavedConfig => ({
+      version: 1,
+      showLegend,
+      showLabels,
+      showRings,
+      showAxesGrid,
+      outerRadius,
+      colormap,
+      highlightOnly,
+      opacityOurs,
+    }),
+    [
+      showLegend,
+      showLabels,
+      showRings,
+      showAxesGrid,
+      outerRadius,
+      colormap,
+      highlightOnly,
+      opacityOurs,
+    ],
+  );
+  const applyBaseConfig = useCallback((cfg: SavedConfig) => {
+    if (!cfg || cfg.version !== 1) return;
+    setShowLegend(cfg.showLegend);
+    setShowLabels(cfg.showLabels);
+    setShowRings(cfg.showRings);
+    setShowAxesGrid(cfg.showAxesGrid);
+    setOuterRadius(cfg.outerRadius);
+    setColormap(cfg.colormap);
+    setHighlightOnly(cfg.highlightOnly);
+    setOpacityOurs(cfg.opacityOurs);
+  }, []);
+
+  const { textOverrides, renderInspectorSections } = useEvalChartConfig<
+    SavedConfig
+  >({
+    storageKey: STORAGE_KEY,
+    buildBaseConfig,
+    applyBaseConfig,
+    filename: 'method-radar-config.json',
+  });
 
   const palette = useMemo(() => {
     // Reserve accent for the highlighted method, sample the rest.
@@ -182,6 +243,78 @@ function MethodRadar() {
 
   const ringValues = [0.2, 0.4, 0.6, 0.8, 1];
 
+  // Build the catalog of editable text ids so the inspector can show
+  // a friendly label for the currently-selected element.
+  const textRefs = useMemo(() => {
+    const refs: Array<{
+      id: string;
+      label: string;
+      defaultText: string;
+      defaultFontSize: number;
+      defaultFontWeight?: number;
+    }> = [
+      {
+        id: 'title',
+        label: '主标题',
+        defaultText: 'Multi-method qualitative radar (§2.4 Table 1)',
+        defaultFontSize: 14,
+        defaultFontWeight: 600,
+      },
+      {
+        id: 'caption',
+        label: '说明文字',
+        defaultText: 'Per-axis scores in [0, 1]; higher = stronger.',
+        defaultFontSize: 12,
+      },
+      {
+        id: 'legend-title',
+        label: '图例标题',
+        defaultText: 'Methods',
+        defaultFontSize: 11,
+        defaultFontWeight: 600,
+      },
+    ];
+    AXES.forEach((axis) => {
+      refs.push({
+        id: `axis-zh-${axis.id}`,
+        label: `轴标签：${axis.labelZh}`,
+        defaultText: axis.labelZh,
+        defaultFontSize: 12,
+        defaultFontWeight: 600,
+      });
+      if (axis.labelEn) {
+        refs.push({
+          id: `axis-en-${axis.id}`,
+          label: `轴英文：${axis.labelEn}`,
+          defaultText: axis.labelEn,
+          defaultFontSize: 9.5,
+        });
+      }
+    });
+    METHODS.forEach((m) => {
+      refs.push({
+        id: `legend-${m.name}`,
+        label: `图例：${m.name}`,
+        defaultText: m.name,
+        defaultFontSize: 11,
+        defaultFontWeight: m.highlight ? 600 : 500,
+      });
+    });
+    return refs;
+  }, []);
+
+  const titleId = 'title';
+  const captionId = 'caption';
+  const titleStyle = textOverrides.resolve(titleId, {
+    text: 'Multi-method qualitative radar (§2.4 Table 1)',
+    fontSize: 14,
+    fontWeight: 600,
+  });
+  const captionStyle = textOverrides.resolve(captionId, {
+    text: 'Per-axis scores in [0, 1]; higher = stronger.',
+    fontSize: 12,
+  });
+
   return (
     <ChartShell
       inspiration={
@@ -259,6 +392,7 @@ function MethodRadar() {
             <Toggle label="同心圆" checked={showRings} onChange={setShowRings} />
             <ColormapSelect value={colormap} onChange={setColormap} />
           </ControlGroup>
+          {renderInspectorSections(textRefs)}
         </>
       }
       notes={
@@ -267,6 +401,8 @@ function MethodRadar() {
           (GAT-CMC-Net) 在跨模态机制、图算子表达力、HRF 时移建模与可解
           释性四个维度同时占优；GAT-Epi 在患者独立评价与癫痫任务匹配上
           也较强但缺乏跨模态机制；EEGNet 的 HRF 时移建模能力为零。
+          点击预览图中的任意标题、图例或轴标签即可在左侧"文字编辑"面板
+          中调整字号、字重、颜色与位置。
         </p>
       }
       figure={
@@ -274,8 +410,14 @@ function MethodRadar() {
           ref={svgRef}
           width={W}
           height={H + 80}
-          title={'Multi-method qualitative radar (§2.4 Table 1)'}
-          caption={'Per-axis scores in [0, 1]; higher = stronger.'}
+          title={titleStyle.text}
+          caption={captionStyle.text}
+          titleOverride={textOverrides.overrides[titleId]}
+          titleSelected={textOverrides.selectedId === titleId}
+          onSelectTitle={() => textOverrides.selectText(titleId)}
+          captionOverride={textOverrides.overrides[captionId]}
+          captionSelected={textOverrides.selectedId === captionId}
+          onSelectCaption={() => textOverrides.selectText(captionId)}
         >
           {/* Rings */}
           {showRings ? (
@@ -328,42 +470,61 @@ function MethodRadar() {
               })
             : null}
 
-          {/* Axis labels */}
+          {/* Axis labels — editable */}
           {showLabels &&
             AXES.map((axis, i) => {
               const [x, y] = polarToXY(i, 1.18);
               const angle = (Math.PI * 2 * i) / N - Math.PI / 2;
               const cosA = Math.cos(angle);
-              const anchor =
+              const anchor: 'start' | 'middle' | 'end' =
                 Math.abs(cosA) < 0.18
                   ? 'middle'
                   : cosA > 0
                   ? 'start'
                   : 'end';
+              const zhId = `axis-zh-${axis.id}`;
+              const enId = `axis-en-${axis.id}`;
+              const zhStyle = textOverrides.resolve(zhId, {
+                text: axis.labelZh,
+                fontSize: 12,
+                fontWeight: 600,
+              });
+              const enStyle = axis.labelEn
+                ? textOverrides.resolve(enId, {
+                    text: axis.labelEn,
+                    fontSize: 9.5,
+                    color: 'rgba(0,0,0,0.65)',
+                  })
+                : null;
               return (
                 <g key={axis.id}>
-                  <text
+                  <EditableSvgText
+                    id={zhId}
                     x={x}
                     y={y - 6}
+                    style={zhStyle}
                     textAnchor={anchor}
-                    fontSize={12}
-                    fontWeight={600}
-                    fill="currentColor"
-                  >
-                    {axis.labelZh}
-                  </text>
-                  {axis.labelEn ? (
-                    <text
+                    selected={textOverrides.selectedId === zhId}
+                    onSelect={(id) => textOverrides.selectText(id)}
+                    onMove={(id, dx, dy) =>
+                      textOverrides.setOverride(id, { dx, dy })
+                    }
+                    svgRef={svgRef}
+                  />
+                  {enStyle && axis.labelEn ? (
+                    <EditableSvgText
+                      id={enId}
                       x={x}
                       y={y + 8}
+                      style={enStyle}
                       textAnchor={anchor}
-                      fontSize={9.5}
-                      fontFamily='Inter, sans-serif'
-                      fill="currentColor"
-                      fillOpacity={0.65}
-                    >
-                      {axis.labelEn}
-                    </text>
+                      selected={textOverrides.selectedId === enId}
+                      onSelect={(id) => textOverrides.selectText(id)}
+                      onMove={(id, dx, dy) =>
+                        textOverrides.setOverride(id, { dx, dy })
+                      }
+                      svgRef={svgRef}
+                    />
                   ) : null}
                 </g>
               );
@@ -440,7 +601,7 @@ function MethodRadar() {
             );
           })}
 
-          {/* Legend */}
+          {/* Legend — editable text */}
           {showLegend ? (
             <g transform={`translate(${W - 200}, 28)`}>
               <rect
@@ -454,45 +615,65 @@ function MethodRadar() {
                 stroke="currentColor"
                 strokeOpacity={0.25}
               />
-              <text
+              <EditableSvgText
+                id="legend-title"
                 x={0}
                 y={2}
-                fontSize={11}
-                fontWeight={600}
-                fill="currentColor"
-              >
-                Methods
-              </text>
-              {METHODS.map((m, i) => (
-                <g key={m.name} transform={`translate(0, ${(i + 1) * 18})`}>
-                  <line
-                    x1={0}
-                    x2={22}
-                    y1={0}
-                    y2={0}
-                    stroke={palette[i]}
-                    strokeWidth={m.highlight ? 3 : 1.6}
-                    strokeDasharray={m.highlight ? undefined : '5 4'}
-                  />
-                  <circle
-                    cx={11}
-                    cy={0}
-                    r={m.highlight ? 3.6 : 2.4}
-                    fill={palette[i]}
-                    stroke={m.highlight ? 'white' : 'none'}
-                    strokeWidth={m.highlight ? 1 : 0}
-                  />
-                  <text
-                    x={30}
-                    y={3.5}
-                    fontSize={11}
-                    fontWeight={m.highlight ? 600 : 500}
-                    fill="currentColor"
-                  >
-                    {m.name}
-                  </text>
-                </g>
-              ))}
+                style={textOverrides.resolve('legend-title', {
+                  text: 'Methods',
+                  fontSize: 11,
+                  fontWeight: 600,
+                })}
+                textAnchor="start"
+                selected={textOverrides.selectedId === 'legend-title'}
+                onSelect={(id) => textOverrides.selectText(id)}
+                onMove={(id, dx, dy) =>
+                  textOverrides.setOverride(id, { dx, dy })
+                }
+                svgRef={svgRef}
+              />
+              {METHODS.map((m, i) => {
+                const labelId = `legend-${m.name}`;
+                const labelStyle = textOverrides.resolve(labelId, {
+                  text: m.name,
+                  fontSize: 11,
+                  fontWeight: m.highlight ? 600 : 500,
+                });
+                return (
+                  <g key={m.name} transform={`translate(0, ${(i + 1) * 18})`}>
+                    <line
+                      x1={0}
+                      x2={22}
+                      y1={0}
+                      y2={0}
+                      stroke={palette[i]}
+                      strokeWidth={m.highlight ? 3 : 1.6}
+                      strokeDasharray={m.highlight ? undefined : '5 4'}
+                    />
+                    <circle
+                      cx={11}
+                      cy={0}
+                      r={m.highlight ? 3.6 : 2.4}
+                      fill={palette[i]}
+                      stroke={m.highlight ? 'white' : 'none'}
+                      strokeWidth={m.highlight ? 1 : 0}
+                    />
+                    <EditableSvgText
+                      id={labelId}
+                      x={30}
+                      y={3.5}
+                      style={labelStyle}
+                      textAnchor="start"
+                      selected={textOverrides.selectedId === labelId}
+                      onSelect={(id) => textOverrides.selectText(id)}
+                      onMove={(id, dx, dy) =>
+                        textOverrides.setOverride(id, { dx, dy })
+                      }
+                      svgRef={svgRef}
+                    />
+                  </g>
+                );
+              })}
             </g>
           ) : null}
         </FigureFrame>

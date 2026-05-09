@@ -1,4 +1,4 @@
-import { useMemo, useRef, useState } from 'react';
+import { useCallback, useMemo, useRef, useState } from 'react';
 import { FigureFrame } from '../../components/FigureFrame';
 import { ChartShell } from '../../components/ChartShell';
 import {
@@ -14,6 +14,9 @@ import type { ExpertSchema } from '../../components/ExpertPanel';
 import { InspirationPanel } from '../../components/InspirationPanel';
 import { registerChart } from '../../registry';
 import { mulberry32, randn } from '../../lib/random';
+import { EditableSvgText } from '../../components/EditableSvgText';
+import { useEvalChartConfig } from '../../lib/useEvalChartConfig';
+import type { TextOverrideMap } from '../../lib/useTextOverrides';
 
 /**
  * Ablation experiment under LOSO patient-independent splits.
@@ -114,6 +117,20 @@ function resample(jitter: number, seed: number): Resampled {
   };
 }
 
+const STORAGE_KEY = 'ablation-bars-configs-v1';
+
+interface SavedConfig {
+  version: 1;
+  seed: number;
+  jitter: number;
+  showValues: boolean;
+  colormap: ColormapName;
+  highlightFull: boolean;
+  showErrorBars: boolean;
+  errorMagnitude: number;
+  textOverrides?: TextOverrideMap;
+}
+
 function AblationBars() {
   const [seed, setSeed] = useState(7);
   const [jitter, setJitter] = useState(0);
@@ -125,6 +142,46 @@ function AblationBars() {
   const svgRef = useRef<SVGSVGElement>(null);
 
   const data = useMemo(() => resample(jitter, seed), [jitter, seed]);
+
+  const buildBaseConfig = useCallback(
+    (): SavedConfig => ({
+      version: 1,
+      seed,
+      jitter,
+      showValues,
+      colormap,
+      highlightFull,
+      showErrorBars,
+      errorMagnitude,
+    }),
+    [
+      seed,
+      jitter,
+      showValues,
+      colormap,
+      highlightFull,
+      showErrorBars,
+      errorMagnitude,
+    ],
+  );
+  const applyBaseConfig = useCallback((cfg: SavedConfig) => {
+    if (!cfg || cfg.version !== 1) return;
+    setSeed(cfg.seed);
+    setJitter(cfg.jitter);
+    setShowValues(cfg.showValues);
+    setColormap(cfg.colormap);
+    setHighlightFull(cfg.highlightFull);
+    setShowErrorBars(cfg.showErrorBars);
+    setErrorMagnitude(cfg.errorMagnitude);
+  }, []);
+  const { textOverrides, renderInspectorSections } = useEvalChartConfig<
+    SavedConfig
+  >({
+    storageKey: STORAGE_KEY,
+    buildBaseConfig,
+    applyBaseConfig,
+    filename: 'ablation-bars-config.json',
+  });
 
   const expertSchema: ExpertSchema = [
     {
@@ -232,32 +289,161 @@ function AblationBars() {
     [colormap],
   );
 
-  const renderXTicks = () =>
-    CONDITIONS.map((cond, i) => (
-      <g key={cond.id} transform={`translate(${xBands[i]}, ${innerH})`}>
-        <line y1={0} y2={5} stroke="currentColor" strokeOpacity={0.6} />
-        <text
-          y={20}
-          textAnchor="middle"
-          fontSize={11.5}
-          fontWeight={600}
-          fill={cond.isFull ? ACCENT : 'currentColor'}
-        >
-          {cond.id}
-        </text>
-        <text
-          y={32}
-          textAnchor="end"
-          fontSize={10}
-          fontFamily='Inter, sans-serif'
-          fill="currentColor"
-          fillOpacity={0.78}
-          transform="rotate(-32, 0, 32)"
-        >
-          {cond.detail}
-        </text>
-      </g>
-    ));
+  /** Render the column-name tick labels for a given panel. The id
+   *  prefix differs per panel so each panel's row can be edited
+   *  independently from the inspector. */
+  const renderXTicks = (panelKey: 'a' | 'b') =>
+    CONDITIONS.map((cond, i) => {
+      const idIdName = `xtick-${panelKey}-${cond.id}`;
+      const idDetailName = `xtick-detail-${panelKey}-${cond.id}`;
+      const idStyle = textOverrides.resolve(idIdName, {
+        text: cond.id,
+        fontSize: 11.5,
+        fontWeight: 600,
+        color: cond.isFull ? ACCENT : 'currentColor',
+      });
+      const detailStyle = textOverrides.resolve(idDetailName, {
+        text: cond.detail,
+        fontSize: 10,
+        color: 'rgba(0,0,0,0.78)',
+      });
+      return (
+        <g key={cond.id} transform={`translate(${xBands[i]}, ${innerH})`}>
+          <line y1={0} y2={5} stroke="currentColor" strokeOpacity={0.6} />
+          <EditableSvgText
+            id={idIdName}
+            x={0}
+            y={20}
+            style={idStyle}
+            textAnchor="middle"
+            selected={textOverrides.selectedId === idIdName}
+            onSelect={(id) => textOverrides.selectText(id)}
+            onMove={(id, dx, dy) =>
+              textOverrides.setOverride(id, { dx, dy })
+            }
+            svgRef={svgRef}
+          />
+          <EditableSvgText
+            id={idDetailName}
+            x={0}
+            y={32}
+            style={detailStyle}
+            textAnchor="end"
+            rotate={-32}
+            selected={textOverrides.selectedId === idDetailName}
+            onSelect={(id) => textOverrides.selectText(id)}
+            onMove={(id, dx, dy) =>
+              textOverrides.setOverride(id, { dx, dy })
+            }
+            svgRef={svgRef}
+          />
+        </g>
+      );
+    });
+
+  const titleId = 'title';
+  const captionId = 'caption';
+  const titleStyle = textOverrides.resolve(titleId, {
+    text: 'Ablation study · LOSO patient-independent',
+    fontSize: 14,
+    fontWeight: 600,
+  });
+  const captionStyle = textOverrides.resolve(captionId, {
+    text:
+      'Synthetic values aligned with §3 Table 5; bars are mean across folds.',
+    fontSize: 12,
+  });
+  const panelATitleId = 'panel-a-title';
+  const panelBTitleId = 'panel-b-title';
+  const legendChbId = 'legend-chb';
+  const legendTuszId = 'legend-tusz';
+  const panelAStyle = textOverrides.resolve(panelATitleId, {
+    text: '(a) Event Sensitivity · CHB-MIT vs. TUSZ',
+    fontSize: 12.5,
+    fontWeight: 600,
+  });
+  const panelBStyle = textOverrides.resolve(panelBTitleId, {
+    text: '(b) False Alarms / hour · CHB-MIT',
+    fontSize: 12.5,
+    fontWeight: 600,
+  });
+  const legendChbStyle = textOverrides.resolve(legendChbId, {
+    text: 'CHB-MIT',
+    fontSize: 11,
+  });
+  const legendTuszStyle = textOverrides.resolve(legendTuszId, {
+    text: 'TUSZ',
+    fontSize: 11,
+  });
+
+  const textRefs = useMemo(() => {
+    const refs: Array<{
+      id: string;
+      label: string;
+      defaultText: string;
+      defaultFontSize: number;
+      defaultFontWeight?: number;
+    }> = [
+      {
+        id: titleId,
+        label: '主标题',
+        defaultText: 'Ablation study · LOSO patient-independent',
+        defaultFontSize: 14,
+        defaultFontWeight: 600,
+      },
+      {
+        id: captionId,
+        label: '说明文字',
+        defaultText:
+          'Synthetic values aligned with §3 Table 5; bars are mean across folds.',
+        defaultFontSize: 12,
+      },
+      {
+        id: panelATitleId,
+        label: '面板 (a) 标题',
+        defaultText: '(a) Event Sensitivity · CHB-MIT vs. TUSZ',
+        defaultFontSize: 12.5,
+        defaultFontWeight: 600,
+      },
+      {
+        id: panelBTitleId,
+        label: '面板 (b) 标题',
+        defaultText: '(b) False Alarms / hour · CHB-MIT',
+        defaultFontSize: 12.5,
+        defaultFontWeight: 600,
+      },
+      {
+        id: legendChbId,
+        label: '图例：CHB-MIT',
+        defaultText: 'CHB-MIT',
+        defaultFontSize: 11,
+      },
+      {
+        id: legendTuszId,
+        label: '图例：TUSZ',
+        defaultText: 'TUSZ',
+        defaultFontSize: 11,
+      },
+    ];
+    (['a', 'b'] as const).forEach((pk) => {
+      CONDITIONS.forEach((cond) => {
+        refs.push({
+          id: `xtick-${pk}-${cond.id}`,
+          label: `面板${pk} · ${cond.id}`,
+          defaultText: cond.id,
+          defaultFontSize: 11.5,
+          defaultFontWeight: 600,
+        });
+        refs.push({
+          id: `xtick-detail-${pk}-${cond.id}`,
+          label: `面板${pk} · ${cond.id} 详情`,
+          defaultText: cond.detail,
+          defaultFontSize: 10,
+        });
+      });
+    });
+    return refs;
+  }, []);
 
   return (
     <ChartShell
@@ -336,6 +522,7 @@ function AblationBars() {
             <Toggle label="误差棒" checked={showErrorBars} onChange={setShowErrorBars} />
             <ColormapSelect value={colormap} onChange={setColormap} />
           </ControlGroup>
+          {renderInspectorSections(textRefs)}
         </>
       }
       notes={
@@ -352,23 +539,30 @@ function AblationBars() {
           ref={svgRef}
           width={W}
           height={H + 80}
-          title={'Ablation study · LOSO patient-independent'}
-          caption={
-            'Synthetic values aligned with §3 Table 5; bars are mean across folds.'
-          }
+          title={titleStyle.text}
+          caption={captionStyle.text}
+          titleOverride={textOverrides.overrides[titleId]}
+          titleSelected={textOverrides.selectedId === titleId}
+          onSelectTitle={() => textOverrides.selectText(titleId)}
+          captionOverride={textOverrides.overrides[captionId]}
+          captionSelected={textOverrides.selectedId === captionId}
+          onSelectCaption={() => textOverrides.selectText(captionId)}
         >
           {/* Panel A — paired Event SE */}
           <g transform={`translate(${margin.left}, ${margin.top})`}>
-            <text
+            <EditableSvgText
+              id={panelATitleId}
               x={innerW / 2}
               y={-30}
+              style={panelAStyle}
               textAnchor="middle"
-              fontSize={12.5}
-              fontWeight={600}
-              fill="currentColor"
-            >
-              (a) Event Sensitivity · CHB-MIT vs. TUSZ
-            </text>
+              selected={textOverrides.selectedId === panelATitleId}
+              onSelect={(id) => textOverrides.selectText(id)}
+              onMove={(id, dx, dy) =>
+                textOverrides.setOverride(id, { dx, dy })
+              }
+              svgRef={svgRef}
+            />
             <YAxis axis={seAxis} offset={0} label="Event sensitivity" gridExtent={innerW} />
             {/* X line */}
             <line
@@ -379,7 +573,7 @@ function AblationBars() {
               stroke="currentColor"
               strokeWidth={1}
             />
-            {renderXTicks()}
+            {renderXTicks('a')}
 
             {/* Bars */}
             {CONDITIONS.map((cond, i) => {
@@ -477,15 +671,35 @@ function AblationBars() {
               />
               <g transform="translate(0, 0)">
                 <rect x={0} y={-6} width={14} height={12} fill={DATASET_BLUE} />
-                <text x={20} y={4} fontSize={11} fill="currentColor">
-                  CHB-MIT
-                </text>
+                <EditableSvgText
+                  id={legendChbId}
+                  x={20}
+                  y={4}
+                  style={legendChbStyle}
+                  textAnchor="start"
+                  selected={textOverrides.selectedId === legendChbId}
+                  onSelect={(id) => textOverrides.selectText(id)}
+                  onMove={(id, dx, dy) =>
+                    textOverrides.setOverride(id, { dx, dy })
+                  }
+                  svgRef={svgRef}
+                />
               </g>
               <g transform="translate(0, 18)">
                 <rect x={0} y={-6} width={14} height={12} fill={DATASET_ORANGE} />
-                <text x={20} y={4} fontSize={11} fill="currentColor">
-                  TUSZ
-                </text>
+                <EditableSvgText
+                  id={legendTuszId}
+                  x={20}
+                  y={4}
+                  style={legendTuszStyle}
+                  textAnchor="start"
+                  selected={textOverrides.selectedId === legendTuszId}
+                  onSelect={(id) => textOverrides.selectText(id)}
+                  onMove={(id, dx, dy) =>
+                    textOverrides.setOverride(id, { dx, dy })
+                  }
+                  svgRef={svgRef}
+                />
               </g>
             </g>
           </g>
@@ -494,16 +708,19 @@ function AblationBars() {
           <g
             transform={`translate(${margin.left + panelW + panelGap}, ${margin.top})`}
           >
-            <text
+            <EditableSvgText
+              id={panelBTitleId}
               x={innerW / 2}
               y={-30}
+              style={panelBStyle}
               textAnchor="middle"
-              fontSize={12.5}
-              fontWeight={600}
-              fill="currentColor"
-            >
-              (b) False Alarms / hour · CHB-MIT
-            </text>
+              selected={textOverrides.selectedId === panelBTitleId}
+              onSelect={(id) => textOverrides.selectText(id)}
+              onMove={(id, dx, dy) =>
+                textOverrides.setOverride(id, { dx, dy })
+              }
+              svgRef={svgRef}
+            />
             <YAxis axis={faAxis} offset={0} label="FA / h" gridExtent={innerW} />
             <line
               x1={0}
@@ -513,7 +730,7 @@ function AblationBars() {
               stroke="currentColor"
               strokeWidth={1}
             />
-            {renderXTicks()}
+            {renderXTicks('b')}
 
             {CONDITIONS.map((cond, i) => {
               const cx = xBands[i];

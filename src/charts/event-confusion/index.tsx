@@ -16,8 +16,9 @@ import {
   type InspirationPreset,
 } from '../../components/InspirationPanel';
 import { registerChart } from '../../registry';
-import { touchSlot, useAutoSave } from '../../lib/useAutoSave';
-import { ConfigManager } from '../../components/ConfigManager';
+import { EditableSvgText } from '../../components/EditableSvgText';
+import { useEvalChartConfig } from '../../lib/useEvalChartConfig';
+import type { TextOverrideMap } from '../../lib/useTextOverrides';
 
 // Default models matching the screenshot
 const DEFAULT_MODELS = [
@@ -71,28 +72,10 @@ interface SavedConfig {
   colormap: ColormapName;
   highlightModel: ModelId | 'all';
   showMetrics: boolean;
+  textOverrides?: TextOverrideMap;
 }
 
 const STORAGE_KEY = 'event-confusion-configs-v1';
-
-function loadStoredConfigs(): Record<string, SavedConfig> {
-  try {
-    const raw = localStorage.getItem(STORAGE_KEY);
-    if (!raw) return {};
-    const parsed = JSON.parse(raw) as Record<string, SavedConfig>;
-    return typeof parsed === 'object' && parsed !== null ? parsed : {};
-  } catch {
-    return {};
-  }
-}
-
-function persistConfigs(slots: Record<string, SavedConfig>) {
-  try {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(slots));
-  } catch {
-    // quota / unavailable
-  }
-}
 
 function EventConfusionChart() {
   const [seed, setSeed] = useState(42);
@@ -112,13 +95,8 @@ function EventConfusionChart() {
     });
   }, [seed, n]);
 
-  // Config management
-  const [savedConfigs, setSavedConfigs] = useState<Record<string, SavedConfig>>(
-    () => loadStoredConfigs(),
-  );
-
-  const buildCurrentConfig = useCallback((): SavedConfig => {
-    return {
+  const buildBaseConfig = useCallback(
+    (): SavedConfig => ({
       version: 1,
       seed,
       n,
@@ -126,10 +104,10 @@ function EventConfusionChart() {
       colormap,
       highlightModel,
       showMetrics,
-    };
-  }, [seed, n, normalize, colormap, highlightModel, showMetrics]);
-
-  const applyConfig = useCallback((cfg: SavedConfig) => {
+    }),
+    [seed, n, normalize, colormap, highlightModel, showMetrics],
+  );
+  const applyBaseConfig = useCallback((cfg: SavedConfig) => {
     if (!cfg || cfg.version !== 1) return;
     setSeed(cfg.seed);
     setN(cfg.n);
@@ -138,42 +116,13 @@ function EventConfusionChart() {
     setHighlightModel(cfg.highlightModel);
     setShowMetrics(cfg.showMetrics);
   }, []);
-
-  const persistAndSetSlots = useCallback((next: Record<string, SavedConfig>) => {
-    setSavedConfigs(next);
-    persistConfigs(next);
-  }, []);
-
-  const saveConfigToSlot = useCallback(
-    (name: string) => {
-      if (!name.trim()) return;
-      setSavedConfigs((prev) => {
-        const next = { ...prev, [name]: buildCurrentConfig() };
-        persistConfigs(next);
-        return next;
-      });
-      touchSlot(STORAGE_KEY, name);
-    },
-    [buildCurrentConfig],
-  );
-
-  const deleteConfigSlot = useCallback((name: string) => {
-    setSavedConfigs((prev) => {
-      if (!(name in prev)) return prev;
-      const rest = { ...prev };
-      delete rest[name];
-      persistConfigs(rest);
-      return rest;
-    });
-  }, []);
-
-  // Auto-save hook
-  useAutoSave<SavedConfig>({
+  const { textOverrides, renderInspectorSections } = useEvalChartConfig<
+    SavedConfig
+  >({
     storageKey: STORAGE_KEY,
-    current: buildCurrentConfig(),
-    slots: savedConfigs,
-    onPersistSlots: persistAndSetSlots,
-    applyConfig,
+    buildBaseConfig,
+    applyBaseConfig,
+    filename: 'event-confusion-config.json',
   });
 
   const expertSchema: ExpertSchema = [
@@ -304,6 +253,40 @@ function EventConfusionChart() {
       ? matrices
       : matrices.filter((m) => m.model.id === highlightModel);
 
+  const titleId = 'title';
+  const captionId = 'caption';
+  const titleStyle = textOverrides.resolve(titleId, {
+    text: '事件级混淆矩阵 · CHB-MIT LOSO',
+    fontSize: 14,
+    fontWeight: 600,
+  });
+  const captionStyle = textOverrides.resolve(captionId, {
+    text: `合成数据 (n=${n}, seed=${seed}) · ${normalize ? '归一化概率' : '原始计数'}`,
+    fontSize: 12,
+  });
+  const textRefs = useMemo(() => {
+    const refs: Array<{
+      id: string;
+      label: string;
+      defaultText: string;
+      defaultFontSize: number;
+      defaultFontWeight?: number;
+    }> = [
+      { id: titleId, label: '主标题', defaultText: '事件级混淆矩阵 · CHB-MIT LOSO', defaultFontSize: 14, defaultFontWeight: 600 },
+      { id: captionId, label: '说明文字', defaultText: `合成数据 (n=${n}, seed=${seed}) · ${normalize ? '归一化概率' : '原始计数'}`, defaultFontSize: 12 },
+    ];
+    DEFAULT_MODELS.forEach((m) => {
+      refs.push({
+        id: `model-${m.id}`,
+        label: `模型标题：${m.name}`,
+        defaultText: m.name,
+        defaultFontSize: 12,
+        defaultFontWeight: 600,
+      });
+    });
+    return refs;
+  }, [n, seed, normalize]);
+
 
   return (
     <ChartShell
@@ -334,16 +317,7 @@ function EventConfusionChart() {
               onChange={(v) => setHighlightModel(v as ModelId | 'all')}
             />
           </ControlGroup>
-          <ControlGroup label="配置管理" description="保存/加载/导出配置">
-            <ConfigManager
-              filename="event-confusion-config.json"
-              savedConfigs={savedConfigs}
-              buildCurrentConfig={buildCurrentConfig}
-              applyConfig={applyConfig}
-              saveConfigToSlot={saveConfigToSlot}
-              deleteConfigSlot={deleteConfigSlot}
-            />
-          </ControlGroup>
+          {renderInspectorSections(textRefs)}
         </>
       }
       notes={
@@ -358,8 +332,14 @@ function EventConfusionChart() {
           ref={svgRef}
           width={W}
           height={H}
-          title="事件级混淆矩阵 · CHB-MIT LOSO"
-          caption={`合成数据 (n=${n}, seed=${seed}) · ${normalize ? '归一化概率' : '原始计数'}`}
+          title={titleStyle.text}
+          caption={captionStyle.text}
+          titleOverride={textOverrides.overrides[titleId]}
+          titleSelected={textOverrides.selectedId === titleId}
+          onSelectTitle={() => textOverrides.selectText(titleId)}
+          captionOverride={textOverrides.overrides[captionId]}
+          captionSelected={textOverrides.selectedId === captionId}
+          onSelectCaption={() => textOverrides.selectText(captionId)}
         >
           <g transform={`translate(${margin.left}, ${margin.top})`}>
             {displayModels.map(({ model, data }, idx) => {
@@ -387,19 +367,28 @@ function EventConfusionChart() {
                 { v: vals.tp, label: normalize ? vals.tp.toFixed(2) : data.tp.toString(), row: 1, col: 1 },
               ];
 
+              const modelTitleId = `model-${model.id}`;
+              const modelTitleStyle = textOverrides.resolve(modelTitleId, {
+                text: model.name,
+                fontSize: 12,
+                fontWeight: 600,
+              });
               return (
                 <g key={model.id} transform={`translate(${x}, 0)`}>
                   {/* Title */}
-                  <text
+                  <EditableSvgText
+                    id={modelTitleId}
                     x={matrixSize / 2}
                     y={-16}
+                    style={modelTitleStyle}
                     textAnchor="middle"
-                    fontSize={12}
-                    fontWeight={600}
-                    fill="currentColor"
-                  >
-                    {model.name}
-                  </text>
+                    selected={textOverrides.selectedId === modelTitleId}
+                    onSelect={(id) => textOverrides.selectText(id)}
+                    onMove={(id, dx, dy) =>
+                      textOverrides.setOverride(id, { dx, dy })
+                    }
+                    svgRef={svgRef}
+                  />
 
                   {/* Matrix */}
                   {cells.map((cell) => (

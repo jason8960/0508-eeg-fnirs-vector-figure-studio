@@ -1,4 +1,4 @@
-import { useMemo, useRef, useState } from 'react';
+import { useCallback, useMemo, useRef, useState } from 'react';
 import { FigureFrame } from '../../components/FigureFrame';
 import { ChartShell } from '../../components/ChartShell';
 import {
@@ -10,6 +10,9 @@ import { sampleColormap, type ColormapName } from '../../lib/colormaps';
 import type { ExpertSchema } from '../../components/ExpertPanel';
 import { InspirationPanel } from '../../components/InspirationPanel';
 import { registerChart } from '../../registry';
+import { EditableSvgText } from '../../components/EditableSvgText';
+import { useEvalChartConfig } from '../../lib/useEvalChartConfig';
+import type { TextOverrideMap } from '../../lib/useTextOverrides';
 
 interface AblationStep {
   label: string;
@@ -26,6 +29,17 @@ const DEFAULT_STEPS: AblationStep[] = [
   { label: '− Temporal regularisation', accuracy: 0.71 },
 ];
 
+const STORAGE_KEY = 'ablation-funnel-configs-v1';
+
+interface SavedConfig {
+  version: 1;
+  maxWidth: number;
+  colormap: ColormapName;
+  stepHeight: number;
+  fillOpacity: number;
+  textOverrides?: TextOverrideMap;
+}
+
 function AblationFunnel() {
   const [maxWidth, setMaxWidth] = useState(420);
   const [colormap, setColormap] = useState<ColormapName>('viridis');
@@ -34,6 +48,32 @@ function AblationFunnel() {
   const svgRef = useRef<SVGSVGElement>(null);
 
   const steps = DEFAULT_STEPS;
+
+  const buildBaseConfig = useCallback(
+    (): SavedConfig => ({
+      version: 1,
+      maxWidth,
+      colormap,
+      stepHeight,
+      fillOpacity,
+    }),
+    [maxWidth, colormap, stepHeight, fillOpacity],
+  );
+  const applyBaseConfig = useCallback((cfg: SavedConfig) => {
+    if (!cfg || cfg.version !== 1) return;
+    setMaxWidth(cfg.maxWidth);
+    setColormap(cfg.colormap);
+    setStepHeight(cfg.stepHeight);
+    setFillOpacity(cfg.fillOpacity);
+  }, []);
+  const { textOverrides, renderInspectorSections } = useEvalChartConfig<
+    SavedConfig
+  >({
+    storageKey: STORAGE_KEY,
+    buildBaseConfig,
+    applyBaseConfig,
+    filename: 'ablation-funnel-config.json',
+  });
 
   const expertSchema: ExpertSchema = [
     {
@@ -70,6 +110,47 @@ function AblationFunnel() {
   const stepH = innerH / steps.length;
   const accuracies = steps.map((s) => s.accuracy);
   const maxAcc = Math.max(...accuracies);
+
+  const titleId = 'title';
+  const captionId = 'caption';
+  const titleStyle = textOverrides.resolve(titleId, {
+    text: 'Ablation contribution funnel',
+    fontSize: 14,
+    fontWeight: 600,
+  });
+  const captionStyle = textOverrides.resolve(captionId, {
+    text: 'Synthetic ablation study; accuracies are illustrative.',
+    fontSize: 12,
+  });
+  const textRefs = useMemo(() => {
+    const refs: Array<{
+      id: string;
+      label: string;
+      defaultText: string;
+      defaultFontSize: number;
+      defaultFontWeight?: number;
+    }> = [
+      { id: titleId, label: '主标题', defaultText: 'Ablation contribution funnel', defaultFontSize: 14, defaultFontWeight: 600 },
+      { id: captionId, label: '说明文字', defaultText: 'Synthetic ablation study; accuracies are illustrative.', defaultFontSize: 12 },
+    ];
+    steps.forEach((s, i) => {
+      refs.push({
+        id: `step-acc-${i}`,
+        label: `准确率：${s.label}`,
+        defaultText: s.accuracy.toFixed(3),
+        defaultFontSize: 13,
+        defaultFontWeight: 600,
+      });
+      refs.push({
+        id: `step-label-${i}`,
+        label: `标签：${s.label}`,
+        defaultText: s.label,
+        defaultFontSize: 11,
+        defaultFontWeight: 500,
+      });
+    });
+    return refs;
+  }, [steps]);
 
   return (
     <ChartShell
@@ -137,6 +218,7 @@ function AblationFunnel() {
           <ControlGroup label="配色">
             <ColormapSelect value={colormap} onChange={setColormap} />
           </ControlGroup>
+          {renderInspectorSections(textRefs)}
         </>
       }
       notes={
@@ -150,8 +232,14 @@ function AblationFunnel() {
           ref={svgRef}
           width={W}
           height={H + 80}
-          title="Ablation contribution funnel"
-          caption="Synthetic ablation study; accuracies are illustrative."
+          title={titleStyle.text}
+          caption={captionStyle.text}
+          titleOverride={textOverrides.overrides[titleId]}
+          titleSelected={textOverrides.selectedId === titleId}
+          onSelectTitle={() => textOverrides.selectText(titleId)}
+          captionOverride={textOverrides.overrides[captionId]}
+          captionSelected={textOverrides.selectedId === captionId}
+          onSelectCaption={() => textOverrides.selectText(captionId)}
         >
           <g transform={`translate(${margin.left}, ${margin.top})`}>
             {steps.map((step, i) => {
@@ -169,31 +257,50 @@ function AblationFunnel() {
               const path = `M${points.map((p) => p.join(',')).join(' L')} Z`;
               const delta =
                 i === 0 ? 0 : steps[i].accuracy - steps[i - 1].accuracy;
+              const accId = `step-acc-${i}`;
+              const labelId = `step-label-${i}`;
+              const accStyle = textOverrides.resolve(accId, {
+                text: step.accuracy.toFixed(3),
+                fontSize: 13,
+                fontWeight: 600,
+                color: 'white',
+              });
+              const labelStyle = textOverrides.resolve(labelId, {
+                text: step.label,
+                fontSize: 11,
+                fontWeight: 500,
+              });
               return (
                 <g key={i}>
                   <path d={path} fill={palette[i]} fillOpacity={fillOpacity} stroke="white" strokeWidth={1} />
-                  <text
+                  <EditableSvgText
+                    id={accId}
                     x={cx}
                     y={top + stepH / 2 + 4}
+                    style={accStyle}
                     textAnchor="middle"
-                    fontSize={13}
-                    fontWeight={600}
-                    fill="white"
-                    style={{ paintOrder: 'stroke', stroke: 'rgba(0,0,0,0.4)', strokeWidth: 2 }}
-                  >
-                    {step.accuracy.toFixed(3)}
-                  </text>
+                    selected={textOverrides.selectedId === accId}
+                    onSelect={(id) => textOverrides.selectText(id)}
+                    onMove={(id, dx, dy) =>
+                      textOverrides.setOverride(id, { dx, dy })
+                    }
+                    svgRef={svgRef}
+                  />
 
                   {/* Side annotation */}
-                  <text
+                  <EditableSvgText
+                    id={labelId}
                     x={innerW + 18}
                     y={top + stepH / 2 - 4}
-                    fontSize={11}
-                    fontWeight={500}
-                    fill="currentColor"
-                  >
-                    {step.label}
-                  </text>
+                    style={labelStyle}
+                    textAnchor="start"
+                    selected={textOverrides.selectedId === labelId}
+                    onSelect={(id) => textOverrides.selectText(id)}
+                    onMove={(id, dx, dy) =>
+                      textOverrides.setOverride(id, { dx, dy })
+                    }
+                    svgRef={svgRef}
+                  />
                   <text
                     x={innerW + 18}
                     y={top + stepH / 2 + 12}

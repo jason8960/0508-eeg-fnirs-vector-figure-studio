@@ -1,4 +1,4 @@
-import { useMemo, useRef, useState } from 'react';
+import { useCallback, useMemo, useRef, useState, type RefObject } from 'react';
 import { line as d3line } from 'd3';
 import { FigureFrame } from '../../components/FigureFrame';
 import { ChartShell } from '../../components/ChartShell';
@@ -24,6 +24,12 @@ import {
   type RocCurve,
   type PrCurve,
 } from './metrics';
+import { EditableSvgText } from '../../components/EditableSvgText';
+import { useEvalChartConfig } from '../../lib/useEvalChartConfig';
+import type {
+  TextOverrideMap,
+  UseTextOverridesResult,
+} from '../../lib/useTextOverrides';
 
 interface ModelSpec {
   name: string;
@@ -46,12 +52,49 @@ interface ComputedModel {
   ci: { lo: number; hi: number };
 }
 
+const STORAGE_KEY = 'roc-pr-configs-v1';
+
+interface SavedConfig {
+  version: 1;
+  n: number;
+  showCi: boolean;
+  bootstrapIter: number;
+  prevalence: number;
+  textOverrides?: TextOverrideMap;
+}
+
 function RocPrChart() {
   const [n, setN] = useState(420);
   const [showCi, setShowCi] = useState(true);
   const [bootstrapIter, setBootstrapIter] = useState(120);
   const [prevalence, setPrevalence] = useState(0.5);
   const svgRef = useRef<SVGSVGElement>(null);
+
+  const buildBaseConfig = useCallback(
+    (): SavedConfig => ({
+      version: 1,
+      n,
+      showCi,
+      bootstrapIter,
+      prevalence,
+    }),
+    [n, showCi, bootstrapIter, prevalence],
+  );
+  const applyBaseConfig = useCallback((cfg: SavedConfig) => {
+    if (!cfg || cfg.version !== 1) return;
+    setN(cfg.n);
+    setShowCi(cfg.showCi);
+    setBootstrapIter(cfg.bootstrapIter);
+    setPrevalence(cfg.prevalence);
+  }, []);
+  const { textOverrides, renderInspectorSections } = useEvalChartConfig<
+    SavedConfig
+  >({
+    storageKey: STORAGE_KEY,
+    buildBaseConfig,
+    applyBaseConfig,
+    filename: 'roc-pr-config.json',
+  });
 
   const models = useMemo<ComputedModel[]>(() => {
     return DEFAULT_MODELS.map((spec) => {
@@ -119,6 +162,39 @@ function RocPrChart() {
   const prPath = d3line<[number, number]>()
     .x((d) => xAxis.scale(d[0]))
     .y((d) => yAxis.scale(d[1]));
+
+  const titleId = 'title';
+  const captionId = 'caption';
+  const titleStyle = textOverrides.resolve(titleId, {
+    text: 'Publication-ready ROC and Precision–Recall curves',
+    fontSize: 14,
+    fontWeight: 600,
+  });
+  const captionStyle = textOverrides.resolve(captionId, {
+    text: `AUC ranges with 95% CI from a bootstrap (B=${bootstrapIter}). Synthetic data, n=${n}.`,
+    fontSize: 12,
+  });
+
+  const textRefs = useMemo(
+    () => [
+      {
+        id: titleId,
+        label: '主标题',
+        defaultText: 'Publication-ready ROC and Precision–Recall curves',
+        defaultFontSize: 14,
+        defaultFontWeight: 600,
+      },
+      {
+        id: captionId,
+        label: '说明文字',
+        defaultText: `AUC ranges with 95% CI from a bootstrap (B=${bootstrapIter}). Synthetic data, n=${n}.`,
+        defaultFontSize: 12,
+      },
+      { id: 'panel-roc-title', label: '面板标题：ROC', defaultText: 'ROC', defaultFontSize: 13, defaultFontWeight: 600 },
+      { id: 'panel-pr-title', label: '面板标题：PR', defaultText: 'Precision–Recall', defaultFontSize: 13, defaultFontWeight: 600 },
+    ],
+    [bootstrapIter, n],
+  );
 
   const inspirations: InspirationPreset[] = [
     {
@@ -193,6 +269,7 @@ function RocPrChart() {
               onChange={setShowCi}
             />
           </ControlGroup>
+          {renderInspectorSections(textRefs)}
         </>
       }
       notes={
@@ -207,8 +284,14 @@ function RocPrChart() {
           ref={svgRef}
           width={W}
           height={H + 80}
-          title="Publication-ready ROC and Precision–Recall curves"
-          caption={`AUC ranges with 95% CI from a bootstrap (B=${bootstrapIter}). Synthetic data, n=${n}.`}
+          title={titleStyle.text}
+          caption={captionStyle.text}
+          titleOverride={textOverrides.overrides[titleId]}
+          titleSelected={textOverrides.selectedId === titleId}
+          onSelectTitle={() => textOverrides.selectText(titleId)}
+          captionOverride={textOverrides.overrides[captionId]}
+          captionSelected={textOverrides.selectedId === captionId}
+          onSelectCaption={() => textOverrides.selectText(captionId)}
         >
           {/* Two side-by-side panels */}
           <g transform={`translate(${margin.left}, ${margin.top})`}>
@@ -217,7 +300,8 @@ function RocPrChart() {
               x={0}
               w={panelW}
               h={panelH}
-              title="ROC"
+              titleId="panel-roc-title"
+              titleText="ROC"
               xLabel="False positive rate"
               yLabel="True positive rate"
               xAxis={xAxis}
@@ -227,13 +311,16 @@ function RocPrChart() {
               showCi={showCi}
               kind="roc"
               line={rocPath}
+              textOverrides={textOverrides}
+              svgRef={svgRef}
             />
             {/* ---- PR ---- */}
             <Panel
               x={panelW + panelGap}
               w={panelW}
               h={panelH}
-              title="Precision–Recall"
+              titleId="panel-pr-title"
+              titleText="Precision–Recall"
               xLabel="Recall"
               yLabel="Precision"
               xAxis={xAxis}
@@ -243,6 +330,8 @@ function RocPrChart() {
               showCi={showCi}
               kind="pr"
               line={prPath}
+              textOverrides={textOverrides}
+              svgRef={svgRef}
             />
           </g>
         </FigureFrame>
@@ -255,7 +344,8 @@ interface PanelProps {
   x: number;
   w: number;
   h: number;
-  title: string;
+  titleId: string;
+  titleText: string;
   xLabel: string;
   yLabel: string;
   xAxis: ReturnType<typeof buildLinearAxis>;
@@ -265,13 +355,16 @@ interface PanelProps {
   showCi: boolean;
   kind: 'roc' | 'pr';
   line: ReturnType<typeof d3line<[number, number]>>;
+  textOverrides: UseTextOverridesResult;
+  svgRef: RefObject<SVGSVGElement | null>;
 }
 
 function Panel({
   x,
   w,
   h,
-  title,
+  titleId,
+  titleText,
   xLabel,
   yLabel,
   xAxis,
@@ -281,19 +374,29 @@ function Panel({
   showCi,
   kind,
   line,
+  textOverrides,
+  svgRef,
 }: PanelProps) {
+  const titleStyle = textOverrides.resolve(titleId, {
+    text: titleText,
+    fontSize: 13,
+    fontWeight: 600,
+  });
   return (
     <g transform={`translate(${x}, 0)`}>
-      <text
+      <EditableSvgText
+        id={titleId}
         x={w / 2}
         y={-12}
+        style={titleStyle}
         textAnchor="middle"
-        fontSize={13}
-        fontWeight={600}
-        fill="currentColor"
-      >
-        {title}
-      </text>
+        selected={textOverrides.selectedId === titleId}
+        onSelect={(id) => textOverrides.selectText(id)}
+        onMove={(id, dx, dy) =>
+          textOverrides.setOverride(id, { dx, dy })
+        }
+        svgRef={svgRef}
+      />
       <YAxis axis={yAxis} offset={0} label={yLabel} gridExtent={w} />
       <XAxis axis={xAxis} offset={h} label={xLabel} gridExtent={h} />
 
