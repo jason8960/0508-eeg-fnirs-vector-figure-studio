@@ -17,6 +17,7 @@ import {
 } from '../../components/InspirationPanel';
 import { registerChart } from '../../registry';
 import { touchSlot, useAutoSave } from '../../lib/useAutoSave';
+import { ConfigManager } from '../../components/ConfigManager';
 
 interface ScatterPoint {
   groundTruth: number;
@@ -203,7 +204,8 @@ function HrfTauRecoveryChart() {
   const deleteConfigSlot = useCallback((name: string) => {
     setSavedConfigs((prev) => {
       if (!(name in prev)) return prev;
-      const { [name]: _, ...rest } = prev;
+      const rest = { ...prev };
+      delete rest[name];
       persistConfigs(rest);
       return rest;
     });
@@ -390,104 +392,6 @@ function HrfTauRecoveryChart() {
     .x((d) => d.x)
     .y((d) => d.y);
 
-  // Config Manager Component
-  const ConfigManager = () => {
-    const [slotName, setSlotName] = useState('');
-    const [importError, setImportError] = useState<string | null>(null);
-
-    const handleImport = (file: File) => {
-      const reader = new FileReader();
-      reader.onload = () => {
-        try {
-          const cfg = JSON.parse(String(reader.result)) as SavedConfig;
-          applyConfig(cfg);
-          setImportError(null);
-        } catch {
-          setImportError('导入失败：无效的配置文件');
-        }
-      };
-      reader.readAsText(file);
-    };
-
-    return (
-      <div className="space-y-2">
-        <div className="flex gap-2">
-          <input
-            type="text"
-            value={slotName}
-            onChange={(e) => setSlotName(e.target.value)}
-            placeholder="配置名称"
-            className="flex-1 rounded border border-ink-600 bg-ink-800 px-2 py-1 text-xs text-ink-50"
-          />
-          <button
-            onClick={() => {
-              if (slotName.trim()) {
-                saveConfigToSlot(slotName.trim());
-                setSlotName('');
-              }
-            }}
-            className="rounded bg-accent px-2 py-1 text-xs text-white hover:bg-accent/80"
-          >
-            保存
-          </button>
-        </div>
-
-        {Object.keys(savedConfigs).length > 0 && (
-          <div className="space-y-1">
-            <p className="text-[10px] uppercase tracking-wider text-ink-400">已保存配置</p>
-            {Object.entries(savedConfigs).map(([name, cfg]) => (
-              <div key={name} className="flex items-center justify-between rounded border border-ink-700 bg-ink-800/50 px-2 py-1">
-                <span className="text-xs text-ink-200">{name}</span>
-                <div className="flex gap-1">
-                  <button
-                    onClick={() => applyConfig(cfg)}
-                    className="rounded px-1.5 py-0.5 text-[10px] bg-ink-700 text-ink-200 hover:bg-ink-600"
-                  >
-                    加载
-                  </button>
-                  <button
-                    onClick={() => deleteConfigSlot(name)}
-                    className="rounded px-1.5 py-0.5 text-[10px] text-red-400 hover:bg-red-900/30"
-                  >
-                    删除
-                  </button>
-                </div>
-              </div>
-            ))}
-          </div>
-        )}
-
-        <div className="flex gap-2">
-          <button
-            onClick={() => {
-              const blob = new Blob([JSON.stringify(buildCurrentConfig(), null, 2)], {
-                type: 'application/json',
-              });
-              const url = URL.createObjectURL(blob);
-              const a = document.createElement('a');
-              a.href = url;
-              a.download = 'hrf-tau-recovery-config.json';
-              a.click();
-              URL.revokeObjectURL(url);
-            }}
-            className="flex-1 rounded border border-ink-600 px-2 py-1 text-xs text-ink-200 hover:bg-ink-800"
-          >
-            导出 JSON
-          </button>
-          <label className="flex-1 cursor-pointer rounded border border-ink-600 px-2 py-1 text-center text-xs text-ink-200 hover:bg-ink-800">
-            导入
-            <input
-              type="file"
-              accept=".json"
-              className="hidden"
-              onChange={(e) => e.target.files?.[0] && handleImport(e.target.files[0])}
-            />
-          </label>
-        </div>
-        {importError && <p className="text-[11px] text-red-400">{importError}</p>}
-      </div>
-    );
-  };
 
   return (
     <ChartShell
@@ -509,7 +413,14 @@ function HrfTauRecoveryChart() {
             <Toggle label="我们的方法" checked={showOurs} onChange={setShowOurs} />
           </ControlGroup>
           <ControlGroup label="配置管理" description="保存/加载/导出配置">
-            <ConfigManager />
+            <ConfigManager
+              filename="hrf-tau-recovery-config.json"
+              savedConfigs={savedConfigs}
+              buildCurrentConfig={buildCurrentConfig}
+              applyConfig={applyConfig}
+              saveConfigToSlot={saveConfigToSlot}
+              deleteConfigSlot={deleteConfigSlot}
+            />
           </ControlGroup>
         </>
       }
