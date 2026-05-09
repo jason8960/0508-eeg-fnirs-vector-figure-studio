@@ -20,7 +20,7 @@
  * change is enforced by the underlying `useAutoSave` (it diffs the
  * stringified snapshot against the latest persisted slot).
  */
-import { useCallback, useMemo, useState, type ReactNode } from 'react';
+import { useCallback, useMemo, useRef, useState, type ReactNode } from 'react';
 import { ConfigManager } from '../components/ConfigManager';
 import { ControlGroup } from '../components/Controls';
 import { TextOverridePanel } from '../components/TextOverridePanel';
@@ -93,6 +93,28 @@ export function useEvalChartConfig<TBase extends EvalConfigBase>(
     [applyBaseConfig],
   );
 
+  /**
+   * Capture the chart's default state during the first render. Each
+   * `useState` initializer in the chart returns its baseline value
+   * before any auto-loaded slot has had a chance to overwrite it, so
+   * `buildBaseConfig()` here yields the canonical "factory defaults"
+   * snapshot. Stored in a ref so it survives subsequent renders
+   * without participating in any dep array. Used by `handleReset` to
+   * implement a generic "restore defaults" button without forcing
+   * each chart to enumerate its initial values manually.
+   */
+  const defaultsRef = useRef<TBase | null>(null);
+  if (defaultsRef.current === null) {
+    defaultsRef.current = buildBaseConfig();
+  }
+
+  const handleReset = useCallback(() => {
+    const defaults = defaultsRef.current;
+    if (!defaults) return;
+    applyBaseConfig(defaults);
+    setOverridesState({});
+  }, [applyBaseConfig]);
+
   const { configManagerProps } = useChartConfig<TBase>({
     storageKey,
     buildCurrentConfig,
@@ -134,12 +156,16 @@ export function useEvalChartConfig<TBase extends EvalConfigBase>(
             label="配置管理"
             description="保存、加载、导入/导出当前配置；每 5 分钟自动保存一次（仅在有改动时）。"
           >
-            <ConfigManager filename={filename} {...configManagerProps} />
+            <ConfigManager
+              filename={filename}
+              {...configManagerProps}
+              onReset={handleReset}
+            />
           </ControlGroup>
         </>
       );
     },
-    [overridesHook, configManagerProps, filename],
+    [overridesHook, configManagerProps, filename, handleReset],
   );
 
   return useMemo(

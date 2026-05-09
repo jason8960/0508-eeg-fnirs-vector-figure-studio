@@ -40,10 +40,65 @@ export interface UseChartConfigResult<T> {
     applyConfig: (cfg: T) => void;
     saveConfigToSlot: (name: string) => void;
     deleteConfigSlot: (name: string) => void;
+    /** Optional reset wired by the higher-level hook. */
+    onReset?: () => void;
   };
 }
 
+/**
+ * Best-effort one-shot migration of legacy localStorage keys to the
+ * unified `<chart-id>-configs-v1` naming scheme.
+ *
+ * Two legacy patterns existed historically:
+ *   1. `<chart-id>-saved-configs-v1` (used by clinical / arch giants)
+ *   2. `chart:<chart-id>:slots`     (used by early architecture batch)
+ *
+ * If the new key already has data we leave everything alone — the user
+ * has already saved something with the new layout. Otherwise we copy
+ * the first non-empty legacy slot map into the new key, plus the
+ * matching `:meta` companion if it exists. The legacy key is left
+ * intact (read-only) so older app versions remain functional, and a
+ * sentinel (`<storageKey>:migrated-from`) records what we did so the
+ * migration runs at most once.
+ */
+export function migrateLegacyStorageKey(storageKey: string): void {
+  if (typeof localStorage === 'undefined') return;
+  const sentinel = `${storageKey}:migrated-from`;
+  try {
+    if (localStorage.getItem(sentinel)) return;
+    if (localStorage.getItem(storageKey)) return;
+  } catch {
+    return;
+  }
+
+  const stem = storageKey.replace(/-configs-v1$/, '');
+  const candidates = [`${stem}-saved-configs-v1`, `chart:${stem}:slots`];
+
+  for (const oldKey of candidates) {
+    if (oldKey === storageKey) continue;
+    let raw: string | null;
+    try {
+      raw = localStorage.getItem(oldKey);
+    } catch {
+      continue;
+    }
+    if (!raw) continue;
+    try {
+      const parsed = JSON.parse(raw);
+      if (typeof parsed !== 'object' || parsed === null) continue;
+      localStorage.setItem(storageKey, raw);
+      const oldMeta = localStorage.getItem(`${oldKey}:meta`);
+      if (oldMeta) localStorage.setItem(`${storageKey}:meta`, oldMeta);
+      localStorage.setItem(sentinel, oldKey);
+      return;
+    } catch {
+      // not JSON or quota exceeded — try the next candidate
+    }
+  }
+}
+
 function loadStoredConfigs<T>(storageKey: string): Record<string, T> {
+  migrateLegacyStorageKey(storageKey);
   try {
     const raw = localStorage.getItem(storageKey);
     if (!raw) return {};
