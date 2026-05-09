@@ -1,4 +1,4 @@
-import { useMemo, useRef, useState } from 'react';
+import { useCallback, useMemo, useRef, useState } from 'react';
 import { line as d3line } from 'd3';
 import { FigureFrame } from '../../components/FigureFrame';
 import { ChartShell } from '../../components/ChartShell';
@@ -13,6 +13,9 @@ import { generateBinaryScores } from '../../lib/synthetic';
 import type { ExpertSchema } from '../../components/ExpertPanel';
 import { InspirationPanel } from '../../components/InspirationPanel';
 import { registerChart } from '../../registry';
+import { EditableSvgText } from '../../components/EditableSvgText';
+import { useEvalChartConfig } from '../../lib/useEvalChartConfig';
+import type { TextOverrideMap } from '../../lib/useTextOverrides';
 
 interface ModelSpec {
   name: string;
@@ -85,11 +88,45 @@ function computeCalibration(
   return { bins: out, ece };
 }
 
+const STORAGE_KEY = 'calibration-curve-configs-v1';
+
+interface SavedConfig {
+  version: 1;
+  n: number;
+  bins: number;
+  prevalence: number;
+  textOverrides?: TextOverrideMap;
+}
+
 function CalibrationChart() {
   const [n, setN] = useState(900);
   const [bins, setBins] = useState(10);
   const [prevalence, setPrevalence] = useState(0.5);
   const svgRef = useRef<SVGSVGElement>(null);
+
+  const buildBaseConfig = useCallback(
+    (): SavedConfig => ({
+      version: 1,
+      n,
+      bins,
+      prevalence,
+    }),
+    [n, bins, prevalence],
+  );
+  const applyBaseConfig = useCallback((cfg: SavedConfig) => {
+    if (!cfg || cfg.version !== 1) return;
+    setN(cfg.n);
+    setBins(cfg.bins);
+    setPrevalence(cfg.prevalence);
+  }, []);
+  const { textOverrides, renderInspectorSections } = useEvalChartConfig<
+    SavedConfig
+  >({
+    storageKey: STORAGE_KEY,
+    buildBaseConfig,
+    applyBaseConfig,
+    filename: 'calibration-curve-config.json',
+  });
 
   const expertSchema: ExpertSchema = [
     {
@@ -155,6 +192,39 @@ function CalibrationChart() {
     .x((d) => xAxis.scale(d.meanScore))
     .y((d) => yAxis.scale(d.fractionPositive))
     .defined((d) => d.count > 0);
+
+  const titleId = 'title';
+  const captionId = 'caption';
+  const titleStyle = textOverrides.resolve(titleId, {
+    text: 'Calibration curve · reliability diagram',
+    fontSize: 14,
+    fontWeight: 600,
+  });
+  const captionStyle = textOverrides.resolve(captionId, {
+    text: `ECE computed across ${bins} equal-width probability bins.`,
+    fontSize: 12,
+  });
+  const textRefs = useMemo(() => {
+    const refs: Array<{
+      id: string;
+      label: string;
+      defaultText: string;
+      defaultFontSize: number;
+      defaultFontWeight?: number;
+    }> = [
+      { id: titleId, label: '主标题', defaultText: 'Calibration curve · reliability diagram', defaultFontSize: 14, defaultFontWeight: 600 },
+      { id: captionId, label: '说明文字', defaultText: `ECE computed across ${bins} equal-width probability bins.`, defaultFontSize: 12 },
+    ];
+    MODELS.forEach((m) => {
+      refs.push({
+        id: `legend-${m.name}`,
+        label: `图例：${m.name}`,
+        defaultText: m.name,
+        defaultFontSize: 11,
+      });
+    });
+    return refs;
+  }, [bins]);
 
   return (
     <ChartShell
@@ -222,6 +292,7 @@ function CalibrationChart() {
               onChange={setBins}
             />
           </ControlGroup>
+          {renderInspectorSections(textRefs)}
         </>
       }
       notes={
@@ -236,8 +307,14 @@ function CalibrationChart() {
           ref={svgRef}
           width={W}
           height={H + 80}
-          title="Calibration curve · reliability diagram"
-          caption={`ECE computed across ${bins} equal-width probability bins.`}
+          title={titleStyle.text}
+          caption={captionStyle.text}
+          titleOverride={textOverrides.overrides[titleId]}
+          titleSelected={textOverrides.selectedId === titleId}
+          onSelectTitle={() => textOverrides.selectText(titleId)}
+          captionOverride={textOverrides.overrides[captionId]}
+          captionSelected={textOverrides.selectedId === captionId}
+          onSelectCaption={() => textOverrides.selectText(captionId)}
         >
           <g transform={`translate(${margin.left}, ${margin.top})`}>
             <YAxis axis={yAxis} offset={0} label="Fraction positive" gridExtent={innerW} />
@@ -291,14 +368,32 @@ function CalibrationChart() {
                 stroke="currentColor"
                 strokeOpacity={0.3}
               />
-              {models.map((m, i) => (
-                <g key={m.spec.name} transform={`translate(10, ${(i + 0.7) * 18})`}>
-                  <line x1={0} x2={18} y1={0} y2={0} stroke={palette[i]} strokeWidth={2} />
-                  <text x={24} y={4} fontSize={11} fill="currentColor">
-                    {m.spec.name}  ECE={m.ece.toFixed(3)}
-                  </text>
-                </g>
-              ))}
+              {models.map((m, i) => {
+                const id = `legend-${m.spec.name}`;
+                const text = `${m.spec.name}  ECE=${m.ece.toFixed(3)}`;
+                const style = textOverrides.resolve(id, {
+                  text,
+                  fontSize: 11,
+                });
+                return (
+                  <g key={m.spec.name} transform={`translate(10, ${(i + 0.7) * 18})`}>
+                    <line x1={0} x2={18} y1={0} y2={0} stroke={palette[i]} strokeWidth={2} />
+                    <EditableSvgText
+                      id={id}
+                      x={24}
+                      y={4}
+                      style={style}
+                      textAnchor="start"
+                      selected={textOverrides.selectedId === id}
+                      onSelect={(idd) => textOverrides.selectText(idd)}
+                      onMove={(idd, dx, dy) =>
+                        textOverrides.setOverride(idd, { dx, dy })
+                      }
+                      svgRef={svgRef}
+                    />
+                  </g>
+                );
+              })}
             </g>
           </g>
         </FigureFrame>

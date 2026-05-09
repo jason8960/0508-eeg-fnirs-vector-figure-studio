@@ -1,4 +1,4 @@
-import { useMemo, useRef, useState } from 'react';
+import { useCallback, useMemo, useRef, useState } from 'react';
 import { FigureFrame } from '../../components/FigureFrame';
 import { ChartShell } from '../../components/ChartShell';
 import {
@@ -14,6 +14,9 @@ import type { ExpertSchema } from '../../components/ExpertPanel';
 import { InspirationPanel } from '../../components/InspirationPanel';
 import { registerChart } from '../../registry';
 import { mulberry32, randn } from '../../lib/random';
+import { EditableSvgText } from '../../components/EditableSvgText';
+import { useEvalChartConfig } from '../../lib/useEvalChartConfig';
+import type { TextOverrideMap } from '../../lib/useTextOverrides';
 
 /**
  * Three-panel baseline comparison (CHB-MIT LOSO).
@@ -108,6 +111,20 @@ function resample(jitter: number, seed: number): Resampled {
   };
 }
 
+const STORAGE_KEY = 'baseline-bars-configs-v1';
+
+interface SavedConfig {
+  version: 1;
+  seed: number;
+  jitter: number;
+  showValues: boolean;
+  colormap: ColormapName | 'panel-default';
+  showOursTrend: boolean;
+  showErrorBars: boolean;
+  errorMagnitude: number;
+  textOverrides?: TextOverrideMap;
+}
+
 function BaselineBars() {
   const [seed, setSeed] = useState(13);
   const [jitter, setJitter] = useState(0);
@@ -121,6 +138,38 @@ function BaselineBars() {
   const svgRef = useRef<SVGSVGElement>(null);
 
   const data = useMemo(() => resample(jitter, seed), [jitter, seed]);
+
+  const buildBaseConfig = useCallback(
+    (): SavedConfig => ({
+      version: 1,
+      seed,
+      jitter,
+      showValues,
+      colormap,
+      showOursTrend,
+      showErrorBars,
+      errorMagnitude,
+    }),
+    [seed, jitter, showValues, colormap, showOursTrend, showErrorBars, errorMagnitude],
+  );
+  const applyBaseConfig = useCallback((cfg: SavedConfig) => {
+    if (!cfg || cfg.version !== 1) return;
+    setSeed(cfg.seed);
+    setJitter(cfg.jitter);
+    setShowValues(cfg.showValues);
+    setColormap(cfg.colormap);
+    setShowOursTrend(cfg.showOursTrend);
+    setShowErrorBars(cfg.showErrorBars);
+    setErrorMagnitude(cfg.errorMagnitude);
+  }, []);
+  const { textOverrides, renderInspectorSections } = useEvalChartConfig<
+    SavedConfig
+  >({
+    storageKey: STORAGE_KEY,
+    buildBaseConfig,
+    applyBaseConfig,
+    filename: 'baseline-bars-config.json',
+  });
 
   const expertSchema: ExpertSchema = [
     {
@@ -250,6 +299,62 @@ function BaselineBars() {
     return base[methodIndex + 1];
   };
 
+  const titleId = 'title';
+  const captionId = 'caption';
+  const titleStyle = textOverrides.resolve(titleId, {
+    text: 'Baseline comparison · CHB-MIT (LOSO)',
+    fontSize: 14,
+    fontWeight: 600,
+  });
+  const captionStyle = textOverrides.resolve(captionId, {
+    text: 'Synthetic values aligned with §3 Table 3; Ours = GAT-CMC-Net.',
+    fontSize: 12,
+  });
+
+  const textRefs = useMemo(() => {
+    const refs: Array<{
+      id: string;
+      label: string;
+      defaultText: string;
+      defaultFontSize: number;
+      defaultFontWeight?: number;
+    }> = [
+      {
+        id: titleId,
+        label: '主标题',
+        defaultText: 'Baseline comparison · CHB-MIT (LOSO)',
+        defaultFontSize: 14,
+        defaultFontWeight: 600,
+      },
+      {
+        id: captionId,
+        label: '说明文字',
+        defaultText:
+          'Synthetic values aligned with §3 Table 3; Ours = GAT-CMC-Net.',
+        defaultFontSize: 12,
+      },
+    ];
+    PANELS.forEach((panel) => {
+      refs.push({
+        id: `panel-title-${panel.key}`,
+        label: `面板标题：${panel.title}`,
+        defaultText: panel.title,
+        defaultFontSize: 12,
+        defaultFontWeight: 600,
+      });
+    });
+    BASELINES.forEach((row) => {
+      refs.push({
+        id: `xtick-${row.name}`,
+        label: `方法标签：${row.name}`,
+        defaultText: row.name,
+        defaultFontSize: 11,
+        defaultFontWeight: row.highlight ? 700 : 500,
+      });
+    });
+    return refs;
+  }, []);
+
   return (
     <ChartShell
       inspiration={
@@ -334,6 +439,7 @@ function BaselineBars() {
               />
             ) : null}
           </ControlGroup>
+          {renderInspectorSections(textRefs)}
         </>
       }
       notes={
@@ -341,7 +447,8 @@ function BaselineBars() {
           基线方法在 CHB-MIT LOSO 上的事件级灵敏度、每小时虚警率与平均
           检出延迟。GAT-CMC-Net 在三个指标上同时取得最优；尤其是 FA/h
           降至 0.32（次优为 0.65），延迟降至 6.4 s（次优为 9.0 s），
-          表明跨模态融合提供了实际可用的临床预警窗。
+          表明跨模态融合提供了实际可用的临床预警窗。点击预览图中的标题、
+          面板标题或方法标签可直接调整字体、字重、颜色与位置。
         </p>
       }
       figure={
@@ -349,10 +456,14 @@ function BaselineBars() {
           ref={svgRef}
           width={W}
           height={H + 80}
-          title={'Baseline comparison · CHB-MIT (LOSO)'}
-          caption={
-            'Synthetic values aligned with §3 Table 3; Ours = GAT-CMC-Net.'
-          }
+          title={titleStyle.text}
+          caption={captionStyle.text}
+          titleOverride={textOverrides.overrides[titleId]}
+          titleSelected={textOverrides.selectedId === titleId}
+          onSelectTitle={() => textOverrides.selectText(titleId)}
+          captionOverride={textOverrides.overrides[captionId]}
+          captionSelected={textOverrides.selectedId === captionId}
+          onSelectCaption={() => textOverrides.selectText(captionId)}
         >
           {PANELS.map((panel, pi) => {
             const yAxis = buildAxis(panel.key);
@@ -365,23 +476,39 @@ function BaselineBars() {
                 ? data.fa
                 : data.lat;
             const ours = values[BASELINES.findIndex((b) => b.highlight)];
+            const panelTitleId = `panel-title-${panel.key}`;
+            const panelTitleStyle = textOverrides.resolve(panelTitleId, {
+              text: panel.title,
+              fontSize: 12,
+              fontWeight: 600,
+            });
             return (
               <g
                 key={panel.key}
                 transform={`translate(${margin.left}, ${transformY})`}
               >
-                {/* Panel title */}
-                <text
+                {/* Panel title — editable */}
+                <EditableSvgText
+                  id={panelTitleId}
                   x={0}
                   y={-10}
-                  fontSize={12}
-                  fontWeight={600}
-                  fill="currentColor"
+                  style={panelTitleStyle}
+                  textAnchor="start"
+                  selected={textOverrides.selectedId === panelTitleId}
+                  onSelect={(id) => textOverrides.selectText(id)}
+                  onMove={(id, dx, dy) =>
+                    textOverrides.setOverride(id, { dx, dy })
+                  }
+                  svgRef={svgRef}
+                />
+                {/* Better-direction arrow (kept inline; not editable) */}
+                <text
+                  x={panelTitleStyle.text.length * panelTitleStyle.fontSize * 0.55 + 6}
+                  y={-10}
+                  fontSize={11}
+                  fill={ACCENT}
                 >
-                  {panel.title}{' '}
-                  <tspan fontSize={11} fill={ACCENT}>
-                    {panel.betterArrow}
-                  </tspan>
+                  {panel.betterArrow}
                 </text>
 
                 <YAxis
@@ -478,32 +605,45 @@ function BaselineBars() {
                   strokeWidth={1}
                 />
 
-                {/* X tick labels — only on the bottom panel */}
+                {/* X tick labels — only on the bottom panel; editable */}
                 {pi === PANELS.length - 1 ? (
                   <g>
-                    {BASELINES.map((row, i) => (
-                      <g
-                        key={row.name}
-                        transform={`translate(${xBands[i]}, ${panelH})`}
-                      >
-                        <line
-                          y1={0}
-                          y2={5}
-                          stroke="currentColor"
-                          strokeOpacity={0.6}
-                        />
-                        <text
-                          y={20}
-                          textAnchor="end"
-                          fontSize={11}
-                          fontWeight={row.highlight ? 700 : 500}
-                          fill={row.highlight ? ACCENT : 'currentColor'}
-                          transform={`rotate(-32, 0, 16)`}
+                    {BASELINES.map((row, i) => {
+                      const tickId = `xtick-${row.name}`;
+                      const tickStyle = textOverrides.resolve(tickId, {
+                        text: row.name,
+                        fontSize: 11,
+                        fontWeight: row.highlight ? 700 : 500,
+                        color: row.highlight ? ACCENT : 'currentColor',
+                      });
+                      return (
+                        <g
+                          key={row.name}
+                          transform={`translate(${xBands[i]}, ${panelH})`}
                         >
-                          {row.name}
-                        </text>
-                      </g>
-                    ))}
+                          <line
+                            y1={0}
+                            y2={5}
+                            stroke="currentColor"
+                            strokeOpacity={0.6}
+                          />
+                          <EditableSvgText
+                            id={tickId}
+                            x={0}
+                            y={20}
+                            style={tickStyle}
+                            textAnchor="end"
+                            rotate={-32}
+                            selected={textOverrides.selectedId === tickId}
+                            onSelect={(id) => textOverrides.selectText(id)}
+                            onMove={(id, dx, dy) =>
+                              textOverrides.setOverride(id, { dx, dy })
+                            }
+                            svgRef={svgRef}
+                          />
+                        </g>
+                      );
+                    })}
                   </g>
                 ) : null}
               </g>
@@ -524,4 +664,3 @@ registerChart({
     '三面板基线对比：Event SE↑、FA/h↓、Detection Latency↓；GAT-CMC-Net 高亮，附带 Ours 参考线。',
   component: BaselineBars,
 });
-

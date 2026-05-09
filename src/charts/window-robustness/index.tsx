@@ -1,4 +1,4 @@
-import { useMemo, useRef, useState } from 'react';
+import { useCallback, useMemo, useRef, useState } from 'react';
 import { line as d3line } from 'd3';
 import { FigureFrame } from '../../components/FigureFrame';
 import { ChartShell } from '../../components/ChartShell';
@@ -15,6 +15,9 @@ import type { ExpertSchema } from '../../components/ExpertPanel';
 import { InspirationPanel } from '../../components/InspirationPanel';
 import { registerChart } from '../../registry';
 import { mulberry32, randn } from '../../lib/random';
+import { EditableSvgText } from '../../components/EditableSvgText';
+import { useEvalChartConfig } from '../../lib/useEvalChartConfig';
+import type { TextOverrideMap } from '../../lib/useTextOverrides';
 
 /**
  * Window-length robustness on CHB-MIT (LOSO).
@@ -112,6 +115,18 @@ function buildSeries(
   return { spec, sensitivity, latency };
 }
 
+const STORAGE_KEY = 'window-robustness-configs-v1';
+
+interface SavedConfig {
+  version: 1;
+  seed: number;
+  jitter: number;
+  showMarkers: boolean;
+  colormap: ColormapName;
+  showOursBand: boolean;
+  textOverrides?: TextOverrideMap;
+}
+
 function WindowRobustness() {
   const [jitter, setJitter] = useState(0.18);
   const [seed, setSeed] = useState(11);
@@ -119,6 +134,34 @@ function WindowRobustness() {
   const [colormap, setColormap] = useState<ColormapName>('viridis');
   const [showOursBand, setShowOursBand] = useState(true);
   const svgRef = useRef<SVGSVGElement>(null);
+
+  const buildBaseConfig = useCallback(
+    (): SavedConfig => ({
+      version: 1,
+      seed,
+      jitter,
+      showMarkers,
+      colormap,
+      showOursBand,
+    }),
+    [seed, jitter, showMarkers, colormap, showOursBand],
+  );
+  const applyBaseConfig = useCallback((cfg: SavedConfig) => {
+    if (!cfg || cfg.version !== 1) return;
+    setSeed(cfg.seed);
+    setJitter(cfg.jitter);
+    setShowMarkers(cfg.showMarkers);
+    setColormap(cfg.colormap);
+    setShowOursBand(cfg.showOursBand);
+  }, []);
+  const { textOverrides, renderInspectorSections } = useEvalChartConfig<
+    SavedConfig
+  >({
+    storageKey: STORAGE_KEY,
+    buildBaseConfig,
+    applyBaseConfig,
+    filename: 'window-robustness-config.json',
+  });
 
   const series = useMemo(
     () =>
@@ -287,9 +330,9 @@ function WindowRobustness() {
     );
   };
 
-  const renderLegend = (innerWidth: number) => {
-    // Compact 2x2 grid below the X axis label so wide names like
-    // "Ours (GAT-CMC-Net)" never overlap the title or the plot area.
+  /** Render the per-panel legend so each panel's labels can be edited
+   *  independently from the inspector. */
+  const renderLegend = (panelKey: 'a' | 'b', innerWidth: number) => {
     const colWidth = innerWidth / 2;
     return (
       <g transform={`translate(0, ${innerH + 52})`}>
@@ -298,6 +341,12 @@ function WindowRobustness() {
           const row = Math.floor(i / 2);
           const x = col * colWidth;
           const y = row * 14;
+          const labelId = `legend-${panelKey}-${m.name}`;
+          const labelStyle = textOverrides.resolve(labelId, {
+            text: m.name,
+            fontSize: 10,
+            fontWeight: m.highlight ? 600 : 500,
+          });
           return (
             <g key={m.name} transform={`translate(${x}, ${y})`}>
               <line
@@ -313,21 +362,101 @@ function WindowRobustness() {
               ) : (
                 <circle cx={9} cy={0} r={2.6} fill={palette[i]} />
               )}
-              <text
+              <EditableSvgText
+                id={labelId}
                 x={24}
                 y={3.5}
-                fontSize={10}
-                fontWeight={m.highlight ? 600 : 500}
-                fill="currentColor"
-              >
-                {m.name}
-              </text>
+                style={labelStyle}
+                textAnchor="start"
+                selected={textOverrides.selectedId === labelId}
+                onSelect={(id) => textOverrides.selectText(id)}
+                onMove={(id, dx, dy) =>
+                  textOverrides.setOverride(id, { dx, dy })
+                }
+                svgRef={svgRef}
+              />
             </g>
           );
         })}
       </g>
     );
   };
+
+  const titleId = 'title';
+  const captionId = 'caption';
+  const titleStyle = textOverrides.resolve(titleId, {
+    text: 'Window-length robustness · CHB-MIT (LOSO)',
+    fontSize: 14,
+    fontWeight: 600,
+  });
+  const captionStyle = textOverrides.resolve(captionId, {
+    text:
+      'Synthetic curves seeded from §3 Table 4; left: event sensitivity, right: detection latency.',
+    fontSize: 12,
+  });
+  const panelATitleId = 'panel-a-title';
+  const panelBTitleId = 'panel-b-title';
+  const panelAStyle = textOverrides.resolve(panelATitleId, {
+    text: '(a) Event Sensitivity vs. window length',
+    fontSize: 12.5,
+    fontWeight: 600,
+  });
+  const panelBStyle = textOverrides.resolve(panelBTitleId, {
+    text: '(b) Detection Latency vs. window length',
+    fontSize: 12.5,
+    fontWeight: 600,
+  });
+
+  const textRefs = useMemo(() => {
+    const refs: Array<{
+      id: string;
+      label: string;
+      defaultText: string;
+      defaultFontSize: number;
+      defaultFontWeight?: number;
+    }> = [
+      {
+        id: titleId,
+        label: '主标题',
+        defaultText: 'Window-length robustness · CHB-MIT (LOSO)',
+        defaultFontSize: 14,
+        defaultFontWeight: 600,
+      },
+      {
+        id: captionId,
+        label: '说明文字',
+        defaultText:
+          'Synthetic curves seeded from §3 Table 4; left: event sensitivity, right: detection latency.',
+        defaultFontSize: 12,
+      },
+      {
+        id: panelATitleId,
+        label: '面板 (a) 标题',
+        defaultText: '(a) Event Sensitivity vs. window length',
+        defaultFontSize: 12.5,
+        defaultFontWeight: 600,
+      },
+      {
+        id: panelBTitleId,
+        label: '面板 (b) 标题',
+        defaultText: '(b) Detection Latency vs. window length',
+        defaultFontSize: 12.5,
+        defaultFontWeight: 600,
+      },
+    ];
+    (['a', 'b'] as const).forEach((pk) => {
+      DEFAULT_METHODS.forEach((m) => {
+        refs.push({
+          id: `legend-${pk}-${m.name}`,
+          label: `面板${pk} · 图例：${m.name}`,
+          defaultText: m.name,
+          defaultFontSize: 10,
+          defaultFontWeight: m.highlight ? 600 : 500,
+        });
+      });
+    });
+    return refs;
+  }, []);
 
   return (
     <ChartShell
@@ -404,6 +533,7 @@ function WindowRobustness() {
             />
             <ColormapSelect value={colormap} onChange={setColormap} />
           </ControlGroup>
+          {renderInspectorSections(textRefs)}
         </>
       }
       notes={
@@ -419,23 +549,30 @@ function WindowRobustness() {
           ref={svgRef}
           width={W}
           height={H + 80}
-          title={'Window-length robustness · CHB-MIT (LOSO)'}
-          caption={
-            'Synthetic curves seeded from §3 Table 4; left: event sensitivity, right: detection latency.'
-          }
+          title={titleStyle.text}
+          caption={captionStyle.text}
+          titleOverride={textOverrides.overrides[titleId]}
+          titleSelected={textOverrides.selectedId === titleId}
+          onSelectTitle={() => textOverrides.selectText(titleId)}
+          captionOverride={textOverrides.overrides[captionId]}
+          captionSelected={textOverrides.selectedId === captionId}
+          onSelectCaption={() => textOverrides.selectText(captionId)}
         >
           {/* Panel A — Event sensitivity */}
           <g transform={`translate(${margin.left}, ${margin.top})`}>
-            <text
+            <EditableSvgText
+              id={panelATitleId}
               x={innerW / 2}
               y={-22}
+              style={panelAStyle}
               textAnchor="middle"
-              fontSize={12.5}
-              fontWeight={600}
-              fill="currentColor"
-            >
-              (a) Event Sensitivity vs. window length
-            </text>
+              selected={textOverrides.selectedId === panelATitleId}
+              onSelect={(id) => textOverrides.selectText(id)}
+              onMove={(id, dx, dy) =>
+                textOverrides.setOverride(id, { dx, dy })
+              }
+              svgRef={svgRef}
+            />
 
             <YAxis
               axis={seAxis}
@@ -560,23 +697,26 @@ function WindowRobustness() {
               );
             })()}
 
-            {renderLegend(innerW)}
+            {renderLegend('a', innerW)}
           </g>
 
           {/* Panel B — Latency */}
           <g
             transform={`translate(${margin.left + panelW + panelGap}, ${margin.top})`}
           >
-            <text
+            <EditableSvgText
+              id={panelBTitleId}
               x={innerW / 2}
               y={-22}
+              style={panelBStyle}
               textAnchor="middle"
-              fontSize={12.5}
-              fontWeight={600}
-              fill="currentColor"
-            >
-              (b) Detection Latency vs. window length
-            </text>
+              selected={textOverrides.selectedId === panelBTitleId}
+              onSelect={(id) => textOverrides.selectText(id)}
+              onMove={(id, dx, dy) =>
+                textOverrides.setOverride(id, { dx, dy })
+              }
+              svgRef={svgRef}
+            />
 
             <YAxis
               axis={latAxis}
@@ -614,7 +754,7 @@ function WindowRobustness() {
               </g>
             ))}
 
-            {renderLegend(innerW)}
+            {renderLegend('b', innerW)}
           </g>
         </FigureFrame>
       }

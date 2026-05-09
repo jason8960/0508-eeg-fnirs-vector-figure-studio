@@ -1,4 +1,4 @@
-import { useMemo, useRef, useState } from 'react';
+import { useCallback, useMemo, useRef, useState } from 'react';
 import { FigureFrame } from '../../components/FigureFrame';
 import { ChartShell } from '../../components/ChartShell';
 import {
@@ -15,6 +15,9 @@ import {
   type InspirationPreset,
 } from '../../components/InspirationPanel';
 import { registerChart } from '../../registry';
+import { EditableSvgText } from '../../components/EditableSvgText';
+import { useEvalChartConfig } from '../../lib/useEvalChartConfig';
+import type { TextOverrideMap } from '../../lib/useTextOverrides';
 
 const DEFAULT_LABELS = ['Inter-ictal', 'Pre-ictal', 'Ictal', 'Post-ictal'];
 
@@ -51,6 +54,18 @@ function buildConfusionMatrix({
   return cm;
 }
 
+const STORAGE_KEY = 'confusion-matrix-configs-v1';
+
+interface SavedConfig {
+  version: 1;
+  seed: number;
+  n: number;
+  separation: number;
+  normalize: boolean;
+  colormap: ColormapName;
+  textOverrides?: TextOverrideMap;
+}
+
 function ConfusionMatrixChart() {
   const [n, setN] = useState(720);
   const [separation, setSeparation] = useState(1.6);
@@ -60,6 +75,34 @@ function ConfusionMatrixChart() {
   const svgRef = useRef<SVGSVGElement>(null);
 
   const labels = DEFAULT_LABELS;
+
+  const buildBaseConfig = useCallback(
+    (): SavedConfig => ({
+      version: 1,
+      seed,
+      n,
+      separation,
+      normalize,
+      colormap,
+    }),
+    [seed, n, separation, normalize, colormap],
+  );
+  const applyBaseConfig = useCallback((cfg: SavedConfig) => {
+    if (!cfg || cfg.version !== 1) return;
+    setSeed(cfg.seed);
+    setN(cfg.n);
+    setSeparation(cfg.separation);
+    setNormalize(cfg.normalize);
+    setColormap(cfg.colormap);
+  }, []);
+  const { textOverrides, renderInspectorSections } = useEvalChartConfig<
+    SavedConfig
+  >({
+    storageKey: STORAGE_KEY,
+    buildBaseConfig,
+    applyBaseConfig,
+    filename: 'confusion-matrix-config.json',
+  });
   const cm = useMemo(
     () => buildConfusionMatrix({ seed, n, labels, separation }),
     [seed, n, labels, separation],
@@ -106,6 +149,83 @@ function ConfusionMatrixChart() {
   const maxVal = Math.max(
     ...cm.flatMap((row, i) => row.map((_, j) => cellValue(i, j))),
   );
+
+  const titleId = 'title';
+  const captionId = 'caption';
+  const trueLabelId = 'true-label';
+  const predictedLabelId = 'predicted-label';
+  const titleStyle = textOverrides.resolve(titleId, {
+    text: `Confusion matrix · $\\mu = ${separation.toFixed(2)}$`,
+    fontSize: 14,
+    fontWeight: 600,
+  });
+  const captionStyle = textOverrides.resolve(captionId, {
+    text: `Synthetic 4-class data, n=${n}.`,
+    fontSize: 12,
+  });
+  const trueLabelStyle = textOverrides.resolve(trueLabelId, {
+    text: 'True label',
+    fontSize: 12,
+    fontWeight: 600,
+  });
+  const predictedLabelStyle = textOverrides.resolve(predictedLabelId, {
+    text: 'Predicted label',
+    fontSize: 12,
+    fontWeight: 600,
+  });
+
+  const textRefs = useMemo(() => {
+    const refs: Array<{
+      id: string;
+      label: string;
+      defaultText: string;
+      defaultFontSize: number;
+      defaultFontWeight?: number;
+    }> = [
+      {
+        id: titleId,
+        label: '主标题',
+        defaultText: `Confusion matrix · $\\mu = ${separation.toFixed(2)}$`,
+        defaultFontSize: 14,
+        defaultFontWeight: 600,
+      },
+      {
+        id: captionId,
+        label: '说明文字',
+        defaultText: `Synthetic 4-class data, n=${n}.`,
+        defaultFontSize: 12,
+      },
+      {
+        id: trueLabelId,
+        label: '坐标轴：True label',
+        defaultText: 'True label',
+        defaultFontSize: 12,
+        defaultFontWeight: 600,
+      },
+      {
+        id: predictedLabelId,
+        label: '坐标轴：Predicted label',
+        defaultText: 'Predicted label',
+        defaultFontSize: 12,
+        defaultFontWeight: 600,
+      },
+    ];
+    labels.forEach((l, i) => {
+      refs.push({
+        id: `row-${i}`,
+        label: `行标签：${l}`,
+        defaultText: l,
+        defaultFontSize: 11,
+      });
+      refs.push({
+        id: `col-${i}`,
+        label: `列标签：${l}`,
+        defaultText: l,
+        defaultFontSize: 11,
+      });
+    });
+    return refs;
+  }, [labels, n, separation]);
 
   const inspirations: InspirationPreset[] = [
     {
@@ -192,6 +312,7 @@ function ConfusionMatrixChart() {
             />
             <ColormapSelect value={colormap} onChange={setColormap} />
           </ControlGroup>
+          {renderInspectorSections(textRefs)}
         </>
       }
       notes={
@@ -206,8 +327,14 @@ function ConfusionMatrixChart() {
           ref={svgRef}
           width={W}
           height={H + 80}
-          title={`Confusion matrix · $\\mu = ${separation.toFixed(2)}$`}
-          caption={`Synthetic 4-class data, n=${n}.`}
+          title={titleStyle.text}
+          caption={captionStyle.text}
+          titleOverride={textOverrides.overrides[titleId]}
+          titleSelected={textOverrides.selectedId === titleId}
+          onSelectTitle={() => textOverrides.selectText(titleId)}
+          captionOverride={textOverrides.overrides[captionId]}
+          captionSelected={textOverrides.selectedId === captionId}
+          onSelectCaption={() => textOverrides.selectText(captionId)}
         >
           <g transform={`translate(${margin.left}, ${margin.top})`}>
             {labels.map((_, i) =>
@@ -215,6 +342,15 @@ function ConfusionMatrixChart() {
                 const v = cellValue(i, j);
                 const t = maxVal === 0 ? 0 : v / maxVal;
                 const luminance = t;
+                const cellId = `cell-${i}-${j}`;
+                const cellText = normalize
+                  ? v.toFixed(2)
+                  : Math.round(v).toString();
+                const cellStyle = textOverrides.resolve(cellId, {
+                  text: cellText,
+                  fontSize: 12,
+                  color: luminance > 0.55 ? '#0d1117' : '#eef0f5',
+                });
                 return (
                   <g key={`${i}-${j}`}>
                     <rect
@@ -226,69 +362,101 @@ function ConfusionMatrixChart() {
                       stroke="white"
                       strokeWidth={1}
                     />
-                    <text
+                    <EditableSvgText
+                      id={cellId}
                       x={j * cellW + cellW / 2}
                       y={i * cellH + cellH / 2 + 4}
+                      style={cellStyle}
                       textAnchor="middle"
-                      fontSize={12}
                       fontFamily='"JetBrains Mono", monospace'
-                      fill={luminance > 0.55 ? '#0d1117' : '#eef0f5'}
-                    >
-                      {normalize ? v.toFixed(2) : Math.round(v).toString()}
-                    </text>
+                      selected={textOverrides.selectedId === cellId}
+                      onSelect={(id) => textOverrides.selectText(id)}
+                      onMove={(id, dx, dy) =>
+                        textOverrides.setOverride(id, { dx, dy })
+                      }
+                      svgRef={svgRef}
+                    />
                   </g>
                 );
               }),
             )}
 
             {/* Axis labels */}
-            {labels.map((l, i) => (
-              <text
-                key={`row-${i}`}
-                x={-8}
-                y={i * cellH + cellH / 2 + 4}
-                textAnchor="end"
-                fontSize={11}
-                fill="currentColor"
-              >
-                {l}
-              </text>
-            ))}
-            {labels.map((l, j) => (
-              <text
-                key={`col-${j}`}
-                x={j * cellW + cellW / 2}
-                y={innerH + 22}
-                textAnchor="middle"
-                fontSize={11}
-                fill="currentColor"
-                transform={`rotate(-30, ${j * cellW + cellW / 2}, ${innerH + 22})`}
-              >
-                {l}
-              </text>
-            ))}
+            {labels.map((l, i) => {
+              const id = `row-${i}`;
+              const style = textOverrides.resolve(id, {
+                text: l,
+                fontSize: 11,
+              });
+              return (
+                <EditableSvgText
+                  key={id}
+                  id={id}
+                  x={-8}
+                  y={i * cellH + cellH / 2 + 4}
+                  style={style}
+                  textAnchor="end"
+                  selected={textOverrides.selectedId === id}
+                  onSelect={(idd) => textOverrides.selectText(idd)}
+                  onMove={(idd, dx, dy) =>
+                    textOverrides.setOverride(idd, { dx, dy })
+                  }
+                  svgRef={svgRef}
+                />
+              );
+            })}
+            {labels.map((l, j) => {
+              const id = `col-${j}`;
+              const style = textOverrides.resolve(id, {
+                text: l,
+                fontSize: 11,
+              });
+              return (
+                <EditableSvgText
+                  key={id}
+                  id={id}
+                  x={j * cellW + cellW / 2}
+                  y={innerH + 22}
+                  style={style}
+                  textAnchor="middle"
+                  rotate={-30}
+                  selected={textOverrides.selectedId === id}
+                  onSelect={(idd) => textOverrides.selectText(idd)}
+                  onMove={(idd, dx, dy) =>
+                    textOverrides.setOverride(idd, { dx, dy })
+                  }
+                  svgRef={svgRef}
+                />
+              );
+            })}
 
-            <text
+            <EditableSvgText
+              id={trueLabelId}
               x={-72}
               y={innerH / 2}
+              style={trueLabelStyle}
               textAnchor="middle"
-              fontSize={12}
-              fontWeight={600}
-              fill="currentColor"
-              transform={`rotate(-90, -72, ${innerH / 2})`}
-            >
-              True label
-            </text>
-            <text
+              rotate={-90}
+              selected={textOverrides.selectedId === trueLabelId}
+              onSelect={(id) => textOverrides.selectText(id)}
+              onMove={(id, dx, dy) =>
+                textOverrides.setOverride(id, { dx, dy })
+              }
+              svgRef={svgRef}
+            />
+            <EditableSvgText
+              id={predictedLabelId}
               x={innerW / 2}
               y={innerH + 56}
+              style={predictedLabelStyle}
               textAnchor="middle"
-              fontSize={12}
-              fontWeight={600}
-              fill="currentColor"
-            >
-              Predicted label
-            </text>
+              selected={textOverrides.selectedId === predictedLabelId}
+              onSelect={(id) => textOverrides.selectText(id)}
+              onMove={(id, dx, dy) =>
+                textOverrides.setOverride(id, { dx, dy })
+              }
+              svgRef={svgRef}
+            />
 
             {/* Colour bar */}
             <ColorBar
