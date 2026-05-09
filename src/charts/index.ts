@@ -28,4 +28,8 @@ import './gat-attention';
 import './gating-fusion';
 import './data-pyramid';
 import './event-decoding';
+import './event-confusion';
+import './training-curves';
+import './cross-dataset-generalization';
+import './hrf-tau-recovery';
 
