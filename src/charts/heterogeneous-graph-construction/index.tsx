@@ -42,11 +42,8 @@ import { InspirationPanel } from '../../components/InspirationPanel';
 import { registerChart } from '../../registry';
 import { usePanelDrag } from '../../lib/usePanelDrag';
 import { renderInlineLatex } from '../../lib/latex';
-import {
-  findLatestSlot,
-  touchSlot,
-  useAutoSave,
-} from '../../lib/useAutoSave';
+import { useEvalChartConfig } from '../../lib/useEvalChartConfig';
+import type { TextOverrideMap } from '../../lib/useTextOverrides';
 
 /* ---------------------------- model types ----------------------------- */
 
@@ -114,6 +111,7 @@ interface SavedConfig {
   hrfTagOverride: string | null;
   veBannerOverride: string | null;
   vfBannerOverride: string | null;
+  textOverrides?: TextOverrideMap;
 }
 
 /* ----------------------- canvas / layout constants -------------------- */
@@ -293,39 +291,7 @@ const DEFAULT_CONFIG: SavedConfig = {
   vfBannerOverride: null,
 };
 
-const STORAGE_KEY = 'heterogeneous-graph-construction-saved-configs-v1';
-type SavedConfigsMap = Record<string, SavedConfig>;
-
-function loadStoredConfigs(): SavedConfigsMap {
-  try {
-    const raw = localStorage.getItem(STORAGE_KEY);
-    if (!raw) return {};
-    const parsed = JSON.parse(raw) as SavedConfigsMap;
-    return typeof parsed === 'object' && parsed !== null ? parsed : {};
-  } catch {
-    return {};
-  }
-}
-
-function persistConfigs(map: SavedConfigsMap) {
-  try {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(map));
-  } catch {
-    // no-op
-  }
-}
-
-function downloadJson(filename: string, data: unknown) {
-  const blob = new Blob([JSON.stringify(data, null, 2)], {
-    type: 'application/json;charset=utf-8',
-  });
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement('a');
-  a.href = url;
-  a.download = filename;
-  a.click();
-  URL.revokeObjectURL(url);
-}
+const STORAGE_KEY = 'heterogeneous-graph-construction-configs-v1';
 
 /* ------------------------- side-panel content ------------------------- */
 
@@ -440,12 +406,6 @@ function HeterogeneousGraphChart() {
 
   const [selectedNodeId, setSelectedNodeId] = useState<string>(ALL_NODES[0].id);
 
-  const [savedSlots, setSavedSlots] = useState<SavedConfigsMap>(() =>
-    loadStoredConfigs(),
-  );
-  const [activeSlotName, setActiveSlotName] = useState<string>('');
-  const [newSlotName, setNewSlotName] = useState<string>('');
-
   /* -- derived: nodes with overrides applied --------------------------- */
 
   const resolvedNodes = useMemo<NodeSpec[]>(() => {
@@ -557,57 +517,13 @@ function HeterogeneousGraphChart() {
     setVfBannerOverride(cfg.vfBannerOverride ?? null);
   }, []);
 
-  const persistAndSet = useCallback((next: SavedConfigsMap) => {
-    setSavedSlots(next);
-    persistConfigs(next);
-  }, []);
-
-  const handleSaveSlot = () => {
-    const name = newSlotName.trim();
-    if (!name) return;
-    const next = { ...savedSlots, [name]: buildCurrentConfig() };
-    persistAndSet(next);
-    touchSlot(STORAGE_KEY, name);
-    setActiveSlotName(name);
-    setNewSlotName('');
-  };
-
-  const handleLoadSlot = () => {
-    if (!activeSlotName) return;
-    const cfg = savedSlots[activeSlotName];
-    if (!cfg) return;
-    applyConfig(cfg);
-    touchSlot(STORAGE_KEY, activeSlotName);
-  };
-
-  const handleDeleteSlot = () => {
-    if (!activeSlotName) return;
-    const rest = { ...savedSlots };
-    delete rest[activeSlotName];
-    persistAndSet(rest);
-    setActiveSlotName('');
-  };
-
-  // 5-min auto-save + auto-load latest on mount.
-  useAutoSave<SavedConfig>({
+  const { renderInspectorSections } = useEvalChartConfig<SavedConfig>({
     storageKey: STORAGE_KEY,
-    current: buildCurrentConfig(),
-    slots: savedSlots,
-    onPersistSlots: persistAndSet,
-    applyConfig,
-    intervalMs: 5 * 60 * 1000,
-    autoLoadLatest: true,
+    buildBaseConfig: buildCurrentConfig,
+    applyBaseConfig: applyConfig,
+    filename: 'heterogeneous-graph-construction.json',
   });
-
-  // Reflect the auto-loaded slot in the dropdown on mount.
-  const [activeSlotInit, setActiveSlotInit] = useState(false);
-  if (!activeSlotInit) {
-    setActiveSlotInit(true);
-    const latest = findLatestSlot(STORAGE_KEY, savedSlots);
-    if (latest) {
-      setActiveSlotName(latest);
-    }
-  }
+  const textRefs = useMemo(() => [], []);
 
   /* -- inspector handlers ---------------------------------------------- */
 
@@ -861,13 +777,6 @@ function HeterogeneousGraphChart() {
         },
       ],
     },
-  ];
-
-  const slotOptions = [
-    { value: '', label: '— 选择 —' },
-    ...Object.keys(savedSlots)
-      .sort()
-      .map((s) => ({ value: s, label: s })),
   ];
 
   const nodeOptions = ALL_NODES.map((n) => ({
@@ -1209,91 +1118,7 @@ function HeterogeneousGraphChart() {
             />
           </ControlGroup>
 
-          <ControlGroup label="配置 / 自动保存">
-            <p className="text-[11px] text-ink-300">
-              每 5 分钟自动检查；如有变更会以
-              {' '}<code>auto-#N (时间戳)</code>{' '}
-              名义新增 slot，旧配置永不丢失。打开本图时自动加载最近的 slot。
-            </p>
-            <label className="flex flex-col gap-1 text-xs text-ink-200">
-              <span>配置名</span>
-              <div className="flex gap-2">
-                <input
-                  type="text"
-                  value={newSlotName}
-                  onChange={(e) => setNewSlotName(e.target.value)}
-                  placeholder="例如：fig4-v3"
-                  className="flex-1 rounded border border-ink-600 bg-ink-800 px-2 py-1 text-ink-50 focus:border-accent focus:outline-none"
-                />
-                <button
-                  type="button"
-                  disabled={!newSlotName.trim()}
-                  onClick={handleSaveSlot}
-                  className="rounded border border-accent bg-accent/20 px-2 py-1 text-[11px] text-ink-50 hover:bg-accent/30 disabled:cursor-not-allowed disabled:opacity-40"
-                >
-                  保存当前
-                </button>
-              </div>
-            </label>
-            <Select
-              label="本地配置 slot"
-              value={activeSlotName}
-              options={slotOptions}
-              onChange={setActiveSlotName}
-            />
-            <div className="flex flex-wrap gap-2">
-              <button
-                type="button"
-                disabled={!activeSlotName}
-                onClick={handleLoadSlot}
-                className="rounded border border-ink-600 bg-ink-800 px-2 py-1 text-[11px] text-ink-100 hover:bg-ink-700 disabled:cursor-not-allowed disabled:opacity-40"
-              >
-                载入
-              </button>
-              <button
-                type="button"
-                disabled={!activeSlotName}
-                onClick={handleDeleteSlot}
-                className="rounded border border-rose-500/60 bg-rose-500/15 px-2 py-1 text-[11px] text-ink-50 hover:bg-rose-500/25 disabled:cursor-not-allowed disabled:opacity-40"
-              >
-                删除
-              </button>
-              <button
-                type="button"
-                onClick={() =>
-                  downloadJson(
-                    'heterogeneous-graph-construction.json',
-                    buildCurrentConfig(),
-                  )
-                }
-                className="rounded border border-ink-600 bg-ink-800 px-2 py-1 text-[11px] text-ink-100 hover:bg-ink-700"
-              >
-                导出 JSON
-              </button>
-              <label className="rounded border border-ink-600 bg-ink-800 px-2 py-1 text-[11px] text-ink-100 hover:bg-ink-700 cursor-pointer">
-                导入 JSON
-                <input
-                  type="file"
-                  accept="application/json,.json"
-                  className="hidden"
-                  onChange={(e) => {
-                    const f = e.target.files?.[0];
-                    if (f) {
-                      f.text().then((txt) => {
-                        try {
-                          const cfg = JSON.parse(txt) as SavedConfig;
-                          applyConfig(cfg);
-                        } catch {
-                          // ignore
-                        }
-                      });
-                    }
-                    e.target.value = '';
-                  }}
-                />
-              </label>
-            </div>
-          </ControlGroup>
+          {renderInspectorSections(textRefs)}
         </>
       }
       notes={
