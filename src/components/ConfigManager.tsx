@@ -13,6 +13,14 @@ export interface ConfigManagerProps<T> {
   applyConfig: (cfg: T) => void;
   saveConfigToSlot: (name: string) => void;
   deleteConfigSlot: (name: string) => void;
+  /**
+   * Optional "restore defaults" handler. When provided, the panel
+   * renders a destructive-styled button that calls back into the
+   * caller; the button asks for confirmation first since the action
+   * cannot be undone (auto-saved slots survive, but the live state
+   * is replaced wholesale).
+   */
+  onReset?: () => void;
 }
 
 export function ConfigManager<T>({
@@ -22,6 +30,7 @@ export function ConfigManager<T>({
   applyConfig,
   saveConfigToSlot,
   deleteConfigSlot,
+  onReset,
 }: ConfigManagerProps<T>) {
   const [slotName, setSlotName] = useState('');
   const [importError, setImportError] = useState<string | null>(null);
@@ -125,6 +134,23 @@ export function ConfigManager<T>({
       </div>
       {importError && (
         <p className="text-[11px] text-red-400">{importError}</p>
+      )}
+      {onReset && (
+        <button
+          type="button"
+          onClick={() => {
+            if (
+              window.confirm(
+                '将当前所有调整恢复为默认状态（已保存配置不会被删除）？',
+              )
+            ) {
+              onReset();
+            }
+          }}
+          className="w-full rounded border border-rose-500/60 bg-rose-500/15 px-2 py-1 text-[11px] text-rose-200 hover:bg-rose-500/25"
+        >
+          恢复默认
+        </button>
       )}
     </div>
   );
