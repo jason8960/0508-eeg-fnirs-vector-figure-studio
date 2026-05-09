@@ -1,4 +1,4 @@
-import { useMemo, useRef, useState } from 'react';
+import { useCallback, useMemo, useRef, useState } from 'react';
 import { chord, ribbon, arc as d3arc } from 'd3';
 import { FigureFrame } from '../../components/FigureFrame';
 import { ChartShell } from '../../components/ChartShell';
@@ -12,6 +12,9 @@ import { mulberry32, randn } from '../../lib/random';
 import type { ExpertSchema } from '../../components/ExpertPanel';
 import { InspirationPanel } from '../../components/InspirationPanel';
 import { registerChart } from '../../registry';
+import { EditableSvgText } from '../../components/EditableSvgText';
+import { useEvalChartConfig } from '../../lib/useEvalChartConfig';
+import type { TextOverrideMap } from '../../lib/useTextOverrides';
 
 const REGIONS = [
   'L. Frontal',
@@ -51,6 +54,18 @@ function generateAttentionTensor(
   return out;
 }
 
+interface SavedConfig {
+  version: 1;
+  t: number;
+  colormap: ColormapName;
+  seed: number;
+  padAngle: number;
+  ribbonOpacity: number;
+  textOverrides?: TextOverrideMap;
+}
+
+const STORAGE_KEY = 'dynamic-chord-configs-v1';
+
 function DynamicChordChart() {
   const [t, setT] = useState(8);
   const [colormap, setColormap] = useState<ColormapName>('magma');
@@ -61,6 +76,32 @@ function DynamicChordChart() {
 
   const T = 32;
   const tensor = useMemo(() => generateAttentionTensor(seed, T, REGIONS.length), [seed]);
+
+  const buildBaseConfig = useCallback(
+    (): SavedConfig => ({
+      version: 1,
+      t,
+      colormap,
+      seed,
+      padAngle,
+      ribbonOpacity,
+    }),
+    [t, colormap, seed, padAngle, ribbonOpacity],
+  );
+  const applyBaseConfig = useCallback((cfg: SavedConfig) => {
+    if (!cfg || cfg.version !== 1) return;
+    setT(cfg.t);
+    setColormap(cfg.colormap);
+    setSeed(cfg.seed);
+    setPadAngle(cfg.padAngle);
+    setRibbonOpacity(cfg.ribbonOpacity);
+  }, []);
+  const { textOverrides, renderInspectorSections } = useEvalChartConfig<SavedConfig>({
+    storageKey: STORAGE_KEY,
+    buildBaseConfig,
+    applyBaseConfig,
+    filename: 'dynamic-chord-config.json',
+  });
 
   const expertSchema: ExpertSchema = [
     {
@@ -108,6 +149,42 @@ function DynamicChordChart() {
   ) => string;
 
   const chords = chordGen(slice);
+
+  const titleId = 'title';
+  const captionId = 'caption';
+  const titleDefault = 'Dynamic connectivity attention chord · slice $t = ' + t + '$';
+  const captionDefault = 'Synthetic 10×10 attention tensor with phase-shifted hemispheric clustering.';
+  const titleStyle = textOverrides.resolve(titleId, {
+    text: titleDefault,
+    fontSize: 14,
+    fontWeight: 600,
+  });
+  const captionStyle = textOverrides.resolve(captionId, {
+    text: captionDefault,
+    fontSize: 12,
+  });
+  const textRefs = useMemo(() => {
+    const refs: Array<{
+      id: string;
+      label: string;
+      defaultText: string;
+      defaultFontSize: number;
+      defaultFontWeight?: number;
+    }> = [
+      { id: titleId, label: '主标题', defaultText: titleDefault, defaultFontSize: 14, defaultFontWeight: 600 },
+      { id: captionId, label: '说明文字', defaultText: captionDefault, defaultFontSize: 12 },
+    ];
+    REGIONS.forEach((r) => {
+      refs.push({
+        id: `region-${r}`,
+        label: `脑区：${r}`,
+        defaultText: r,
+        defaultFontSize: 11,
+        defaultFontWeight: 500,
+      });
+    });
+    return refs;
+  }, [titleDefault]);
 
   return (
     <ChartShell
@@ -174,6 +251,7 @@ function DynamicChordChart() {
           <ControlGroup label="配色">
             <ColormapSelect value={colormap} onChange={setColormap} />
           </ControlGroup>
+          {renderInspectorSections(textRefs)}
         </>
       }
       notes={
@@ -189,34 +267,51 @@ function DynamicChordChart() {
           ref={svgRef}
           width={W}
           height={H + 80}
-          title={'Dynamic connectivity attention chord · slice $t = ' + t + '$'}
-          caption="Synthetic 10×10 attention tensor with phase-shifted hemispheric clustering."
+          title={titleStyle.text}
+          caption={captionStyle.text}
+          titleOverride={textOverrides.overrides[titleId]}
+          titleSelected={textOverrides.selectedId === titleId}
+          onSelectTitle={() => textOverrides.selectText(titleId)}
+          captionOverride={textOverrides.overrides[captionId]}
+          captionSelected={textOverrides.selectedId === captionId}
+          onSelectCaption={() => textOverrides.selectText(captionId)}
         >
           <g transform={`translate(${cx}, ${cy})`}>
-            {chords.groups.map((g, i) => (
-              <g key={i}>
-                <path d={arcGen(g)} fill={palette[i]} stroke="white" strokeWidth={0.5} />
-                {(() => {
-                  const angle = (g.startAngle + g.endAngle) / 2 - Math.PI / 2;
-                  const r = outerR + 18;
-                  const tx = Math.cos(angle) * r;
-                  const ty = Math.sin(angle) * r;
-                  const rotate = (angle * 180) / Math.PI;
-                  return (
-                    <text
-                      transform={`translate(${tx}, ${ty}) rotate(${rotate})`}
-                      textAnchor={Math.cos(angle) < 0 ? 'end' : 'start'}
-                      dominantBaseline="middle"
-                      fontSize={11}
-                      fontWeight={500}
-                      fill="#0d1117"
-                    >
-                      {REGIONS[i]}
-                    </text>
-                  );
-                })()}
-              </g>
-            ))}
+            {chords.groups.map((g, i) => {
+              const region = REGIONS[i];
+              const regionId = `region-${region}`;
+              const angle = (g.startAngle + g.endAngle) / 2 - Math.PI / 2;
+              const r = outerR + 18;
+              const tx = Math.cos(angle) * r;
+              const ty = Math.sin(angle) * r;
+              const rotate = (angle * 180) / Math.PI;
+              const regionStyle = textOverrides.resolve(regionId, {
+                text: region,
+                fontSize: 11,
+                fontWeight: 500,
+                color: '#0d1117',
+              });
+              return (
+                <g key={i}>
+                  <path d={arcGen(g)} fill={palette[i]} stroke="white" strokeWidth={0.5} />
+                  <EditableSvgText
+                    id={regionId}
+                    x={tx}
+                    y={ty}
+                    style={regionStyle}
+                    rotate={rotate}
+                    textAnchor={Math.cos(angle) < 0 ? 'end' : 'start'}
+                    dominantBaseline="middle"
+                    selected={textOverrides.selectedId === regionId}
+                    onSelect={(id) => textOverrides.selectText(id)}
+                    onMove={(id, dx, dy) =>
+                      textOverrides.setOverride(id, { dx, dy })
+                    }
+                    svgRef={svgRef}
+                  />
+                </g>
+              );
+            })}
             {chords.map((c, i) => (
               <path
                 key={i}

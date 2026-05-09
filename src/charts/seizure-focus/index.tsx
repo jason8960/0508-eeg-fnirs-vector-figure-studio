@@ -1,4 +1,4 @@
-import { useMemo, useRef, useState } from 'react';
+import { useCallback, useMemo, useRef, useState } from 'react';
 import { contours } from 'd3';
 import { FigureFrame } from '../../components/FigureFrame';
 import { ChartShell } from '../../components/ChartShell';
@@ -13,6 +13,22 @@ import { mulberry32, randn } from '../../lib/random';
 import type { ExpertSchema } from '../../components/ExpertPanel';
 import { InspirationPanel } from '../../components/InspirationPanel';
 import { registerChart } from '../../registry';
+import { EditableSvgText } from '../../components/EditableSvgText';
+import { useEvalChartConfig } from '../../lib/useEvalChartConfig';
+import type { TextOverrideMap } from '../../lib/useTextOverrides';
+
+interface SavedConfig {
+  version: 1;
+  gridSize: number;
+  thresholds: number;
+  colormap: ColormapName;
+  showLandmarks: boolean;
+  seed: number;
+  labelOpacity: number;
+  textOverrides?: TextOverrideMap;
+}
+
+const STORAGE_KEY = 'seizure-focus-configs-v1';
 
 interface AnatomicalLandmark {
   name: string;
@@ -75,6 +91,34 @@ function SeizureFocusChart() {
 
   const field = useMemo(() => generateFocusField(seed, gridSize), [seed, gridSize]);
 
+  const buildBaseConfig = useCallback(
+    (): SavedConfig => ({
+      version: 1,
+      gridSize,
+      thresholds,
+      colormap,
+      showLandmarks,
+      seed,
+      labelOpacity,
+    }),
+    [gridSize, thresholds, colormap, showLandmarks, seed, labelOpacity],
+  );
+  const applyBaseConfig = useCallback((cfg: SavedConfig) => {
+    if (!cfg || cfg.version !== 1) return;
+    setGridSize(cfg.gridSize);
+    setThresholds(cfg.thresholds);
+    setColormap(cfg.colormap);
+    setShowLandmarks(cfg.showLandmarks);
+    setSeed(cfg.seed);
+    setLabelOpacity(cfg.labelOpacity);
+  }, []);
+  const { textOverrides, renderInspectorSections } = useEvalChartConfig<SavedConfig>({
+    storageKey: STORAGE_KEY,
+    buildBaseConfig,
+    applyBaseConfig,
+    filename: 'seizure-focus-config.json',
+  });
+
   const expertSchema: ExpertSchema = [
     {
       label: '网格',
@@ -116,6 +160,50 @@ function SeizureFocusChart() {
     );
     return contours().size([gridSize, gridSize]).thresholds(t)(field);
   }, [field, gridSize, max, thresholds]);
+
+  const titleId = 'title';
+  const captionId = 'caption';
+  const colorbarLabelId = 'colorbar-label';
+  const titleDefault = 'Seizure focus localisation';
+  const captionDefault = 'd3-contour over a 2D importance grid clipped to the unit head disc.';
+  const colorbarLabelDefault = 'Focus score';
+  const titleStyle = textOverrides.resolve(titleId, {
+    text: titleDefault,
+    fontSize: 14,
+    fontWeight: 600,
+  });
+  const captionStyle = textOverrides.resolve(captionId, {
+    text: captionDefault,
+    fontSize: 12,
+  });
+  const colorbarLabelStyle = textOverrides.resolve(colorbarLabelId, {
+    text: colorbarLabelDefault,
+    fontSize: 11,
+    color: '#0d1117',
+  });
+  const textRefs = useMemo(() => {
+    const refs: Array<{
+      id: string;
+      label: string;
+      defaultText: string;
+      defaultFontSize: number;
+      defaultFontWeight?: number;
+    }> = [
+      { id: titleId, label: '主标题', defaultText: titleDefault, defaultFontSize: 14, defaultFontWeight: 600 },
+      { id: captionId, label: '说明文字', defaultText: captionDefault, defaultFontSize: 12 },
+      { id: colorbarLabelId, label: '色条轴标签', defaultText: colorbarLabelDefault, defaultFontSize: 11 },
+    ];
+    LANDMARKS.forEach((l) => {
+      refs.push({
+        id: `landmark-${l.name}`,
+        label: `解剖标签：${l.name}`,
+        defaultText: l.name,
+        defaultFontSize: 11,
+        defaultFontWeight: 500,
+      });
+    });
+    return refs;
+  }, []);
 
   return (
     <ChartShell
@@ -193,6 +281,7 @@ function SeizureFocusChart() {
             <Toggle label="解剖标签" checked={showLandmarks} onChange={setShowLandmarks} />
             <ColormapSelect value={colormap} onChange={setColormap} />
           </ControlGroup>
+          {renderInspectorSections(textRefs)}
         </>
       }
       notes={
@@ -207,8 +296,14 @@ function SeizureFocusChart() {
           ref={svgRef}
           width={W}
           height={H + 80}
-          title="Seizure focus localisation"
-          caption="d3-contour over a 2D importance grid clipped to the unit head disc."
+          title={titleStyle.text}
+          caption={captionStyle.text}
+          titleOverride={textOverrides.overrides[titleId]}
+          titleSelected={textOverrides.selectedId === titleId}
+          onSelectTitle={() => textOverrides.selectText(titleId)}
+          captionOverride={textOverrides.overrides[captionId]}
+          captionSelected={textOverrides.selectedId === captionId}
+          onSelectCaption={() => textOverrides.selectText(captionId)}
         >
           <defs>
             <clipPath id="focus-clip" clipPathUnits="userSpaceOnUse">
@@ -251,18 +346,34 @@ function SeizureFocusChart() {
 
           {/* Landmarks */}
           {showLandmarks
-            ? LANDMARKS.map((l) => (
-                <g
-                  key={l.name}
-                  transform={`translate(${cx + l.x * radius}, ${cy - l.y * radius})`}
-                  opacity={labelOpacity}
-                >
-                  <circle r={3} fill="#0d1117" />
-                  <text x={6} y={4} fontSize={11} fontWeight={500} fill="#0d1117">
-                    {l.name}
-                  </text>
-                </g>
-              ))
+            ? LANDMARKS.map((l) => {
+                const lmId = `landmark-${l.name}`;
+                const lmStyle = textOverrides.resolve(lmId, {
+                  text: l.name,
+                  fontSize: 11,
+                  fontWeight: 500,
+                  color: '#0d1117',
+                });
+                const tx = cx + l.x * radius;
+                const ty = cy - l.y * radius;
+                return (
+                  <g key={l.name} opacity={labelOpacity}>
+                    <circle cx={tx} cy={ty} r={3} fill="#0d1117" />
+                    <EditableSvgText
+                      id={lmId}
+                      x={tx + 6}
+                      y={ty + 4}
+                      style={lmStyle}
+                      selected={textOverrides.selectedId === lmId}
+                      onSelect={(id) => textOverrides.selectText(id)}
+                      onMove={(id, dx, dy) =>
+                        textOverrides.setOverride(id, { dx, dy })
+                      }
+                      svgRef={svgRef}
+                    />
+                  </g>
+                );
+              })
             : null}
 
           {/* Color bar */}
@@ -293,14 +404,20 @@ function SeizureFocusChart() {
                 {(t * max).toFixed(2)}
               </text>
             ))}
-            <text
-              transform={`translate(54, ${radius}) rotate(-90)`}
+            <EditableSvgText
+              id={colorbarLabelId}
+              x={54}
+              y={radius}
+              style={colorbarLabelStyle}
+              rotate={-90}
               textAnchor="middle"
-              fontSize={11}
-              fill="#0d1117"
-            >
-              Focus score
-            </text>
+              selected={textOverrides.selectedId === colorbarLabelId}
+              onSelect={(id) => textOverrides.selectText(id)}
+              onMove={(id, dx, dy) =>
+                textOverrides.setOverride(id, { dx, dy })
+              }
+              svgRef={svgRef}
+            />
           </g>
         </FigureFrame>
       }
