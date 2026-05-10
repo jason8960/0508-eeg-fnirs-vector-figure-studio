@@ -33,6 +33,11 @@ import { renderInlineLatex } from '../../lib/latex';
 import { registerChart } from '../../registry';
 import { useEvalChartConfig } from '../../lib/useEvalChartConfig';
 import type { TextOverrideMap } from '../../lib/useTextOverrides';
+import {
+  useLatestPythonEmitter,
+  type PythonEmitter,
+} from '../../lib/pythonExport';
+import { emitGatingFusionPython } from './python';
 
 /* ----------------------------- types ---------------------------------- */
 
@@ -262,11 +267,14 @@ function GatingFusionChart() {
     if (!c || c.version !== 1) return;
     setCfg(c);
   }, []);
+  const pythonEmitterRef = useRef<PythonEmitter | null>(null);
   const { renderInspectorSections } = useEvalChartConfig<SavedConfig>({
     storageKey: STORAGE_KEY,
     buildBaseConfig,
     applyBaseConfig,
     filename: 'gating-fusion-config.json',
+    pythonEmitterRef,
+    pythonFilename: 'gating-fusion.py',
   });
   const textRefs = useMemo(() => [], []);
 
@@ -296,6 +304,58 @@ function GatingFusionChart() {
       };
     });
   }, [cfg.arrows, cfg.modules]);
+
+  useLatestPythonEmitter(pythonEmitterRef, () =>
+    emitGatingFusionPython({
+      title: cfg.title,
+      caption: cfg.legendText,
+      width: W_FIG,
+      height: H_FIG,
+      modules: (Object.keys(cfg.modules) as ModuleId[]).map((id) => {
+        const m = cfg.modules[id];
+        return {
+          id: m.id,
+          x: m.x,
+          y: m.y,
+          w: m.w,
+          h: m.h,
+          title: m.title,
+          body: m.body,
+          fill: m.fill,
+          stroke: m.stroke,
+        };
+      }),
+      arrows: cfg.arrows.map((a) => {
+        const src = cfg.modules[a.from];
+        const dst = cfg.modules[a.to];
+        const dstMid = midOf(dst);
+        const srcMid = midOf(src);
+        const start = snapToRect(src, dstMid);
+        const end = snapToRect(dst, srcMid);
+        const mx = (start.x + end.x) / 2;
+        const my = (start.y + end.y) / 2;
+        return {
+          startX: start.x,
+          startY: start.y,
+          endX: end.x,
+          endY: end.y,
+          labelX: mx + (a.labelDx ?? 0),
+          labelY: my + (a.labelDy ?? -10),
+          label: a.label,
+          stroke: a.stroke ?? '#444',
+        };
+      }),
+      showLegend: cfg.showLegend,
+      legendText: cfg.legendText,
+      legendX: cfg.legendPos.x,
+      legendY: cfg.legendPos.y,
+      legendAlign: cfg.legendAlign,
+      legendSize: cfg.legendSize,
+      moduleTitleSize: cfg.moduleTitleSize,
+      moduleBodySize: cfg.moduleBodySize,
+      arrowLabelSize: cfg.arrowLabelSize,
+    }),
+  );
 
   /* ----------------------- expert schema ------------------------ */
   const expertSchema: ExpertSchema = useMemo(

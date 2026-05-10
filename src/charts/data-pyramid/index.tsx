@@ -31,6 +31,11 @@ import { renderInlineLatex } from '../../lib/latex';
 import { registerChart } from '../../registry';
 import { useEvalChartConfig } from '../../lib/useEvalChartConfig';
 import type { TextOverrideMap } from '../../lib/useTextOverrides';
+import {
+  useLatestPythonEmitter,
+  type PythonEmitter,
+} from '../../lib/pythonExport';
+import { emitDataPyramidPython } from './python';
 
 /* ----------------------------- types ---------------------------------- */
 
@@ -182,11 +187,14 @@ function DataPyramidChart() {
     if (!c || c.version !== 1) return;
     setCfg(c);
   }, []);
+  const pythonEmitterRef = useRef<PythonEmitter | null>(null);
   const { renderInspectorSections } = useEvalChartConfig<SavedConfig>({
     storageKey: STORAGE_KEY,
     buildBaseConfig,
     applyBaseConfig,
     filename: 'data-pyramid-config.json',
+    pythonEmitterRef,
+    pythonFilename: 'data-pyramid.py',
   });
   const textRefs = useMemo(() => [], []);
 
@@ -222,6 +230,45 @@ function DataPyramidChart() {
       };
     });
   }, [cfg.layers, cfg.cx, cfg.topY, cfg.bottomY, cfg.minWidth, cfg.maxWidth, cfg.gap]);
+
+  useLatestPythonEmitter(pythonEmitterRef, () =>
+    emitDataPyramidPython({
+      title: cfg.title,
+      caption: cfg.subtitle,
+      width: W_FIG,
+      height: H_FIG,
+      cx: cfg.cx,
+      layers: cfg.layers.map((l, i) => {
+        const g = layerGeoms[i];
+        return {
+          title: l.title,
+          body: l.body,
+          fill: l.fill,
+          stroke: l.stroke,
+          rightAnnotation: l.rightAnnotation,
+          showAnnotation: l.showAnnotation,
+          topY: g.yTop,
+          botY: g.yBot,
+          midY: g.yMid,
+          xLeftTop: cfg.cx - g.halfTop,
+          xRightTop: cfg.cx + g.halfTop,
+          xLeftBot: cfg.cx - g.halfBot,
+          xRightBot: cfg.cx + g.halfBot,
+        };
+      }),
+      showAnnotations: cfg.showAnnotations,
+      annotationX: cfg.annotationPos.x,
+      annotationFontSize: cfg.annotationSize,
+      layerTitleSize: cfg.layerTitleSize,
+      layerBodySize: cfg.layerBodySize,
+      showNote: cfg.showNote,
+      noteText: cfg.noteText,
+      noteX: cfg.notePos.x,
+      noteY: cfg.notePos.y,
+      noteAlign: cfg.noteAlign,
+      noteFontSize: cfg.noteSize,
+    }),
+  );
 
   /* ----------------------- expert schema ------------------------ */
   const expertSchema: ExpertSchema = useMemo(

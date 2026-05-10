@@ -30,6 +30,11 @@ import { renderInlineLatex } from '../../lib/latex';
 import { registerChart } from '../../registry';
 import { useEvalChartConfig } from '../../lib/useEvalChartConfig';
 import type { TextOverrideMap } from '../../lib/useTextOverrides';
+import {
+  useLatestPythonEmitter,
+  type PythonEmitter,
+} from '../../lib/pythonExport';
+import { emitGatAttentionPython } from './python';
 
 /* ----------------------------- types ---------------------------------- */
 
@@ -193,11 +198,14 @@ function GatAttentionChart() {
     if (!c || c.version !== 1) return;
     setCfg(c);
   }, []);
+  const pythonEmitterRef = useRef<PythonEmitter | null>(null);
   const { renderInspectorSections } = useEvalChartConfig<SavedConfig>({
     storageKey: STORAGE_KEY,
     buildBaseConfig,
     applyBaseConfig,
     filename: 'gat-attention-config.json',
+    pythonEmitterRef,
+    pythonFilename: 'gat-attention.py',
   });
   const textRefs = useMemo(() => [], []);
 
@@ -298,6 +306,49 @@ function GatAttentionChart() {
       return cfg.strokeLow;
     },
     [cfg.strokeHigh, cfg.strokeMid, cfg.strokeLow],
+  );
+
+  useLatestPythonEmitter(pythonEmitterRef, () =>
+    emitGatAttentionPython({
+      title: cfg.title,
+      caption: cfg.formulaTitle,
+      width: W_FIG,
+      height: H_FIG,
+      centreX: cfg.centre.x,
+      centreY: cfg.centre.y,
+      centreLabel: cfg.centre.label,
+      centreFill: cfg.centre.fill,
+      neighbours: cfg.neighbours.map((n, i) => ({
+        id: n.id,
+        label: n.label,
+        x: n.x,
+        y: n.y,
+        fill: n.fill,
+        alpha: alphas[i],
+        strokeColor: colourOf(alphas[i]),
+        strokeWidth: widthOf(alphas[i]),
+        kind: n.kind,
+      })),
+      showAlphaLabels: cfg.showAlphaLabels,
+      showFormula: cfg.showFormula,
+      formula: cfg.formula,
+      formulaTitle: cfg.formulaTitle,
+      formulaX: cfg.formulaPos.x,
+      formulaY: cfg.formulaPos.y,
+      formulaSize: cfg.formulaSize,
+      showLegend: cfg.showLegend,
+      legendX: cfg.legendPos.x,
+      legendY: cfg.legendPos.y,
+      legendSize: cfg.legendSize,
+      noteText: cfg.noteText,
+      showNote: cfg.showNote,
+      noteX: cfg.notePos.x,
+      noteY: cfg.notePos.y,
+      noteAlign: cfg.noteAlign,
+      noteSize: cfg.noteSize,
+      nodeLabelSize: cfg.nodeLabelSize,
+      edgeLabelSize: cfg.edgeLabelSize,
+    }),
   );
 
   /** Snap line endpoints onto each node's bounding circle so the
