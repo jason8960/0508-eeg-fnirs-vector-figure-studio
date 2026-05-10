@@ -26,10 +26,13 @@ import {
 } from '../../components/Controls';
 import type { ExpertSchema } from '../../components/ExpertPanel';
 import { InspirationPanel } from '../../components/InspirationPanel';
-import { renderInlineLatex } from '../../lib/latex';
 import { registerChart } from '../../registry';
 import { useEvalChartConfig } from '../../lib/useEvalChartConfig';
 import type { TextOverrideMap } from '../../lib/useTextOverrides';
+import { type FormatStore, type TextFormatDefaults } from '../../lib/textFormat';
+import { useTextFormat } from '../../lib/useTextFormat';
+import { TextFormatPopover } from '../../components/TextFormatPopover';
+import { EditableForeignText as ForeignText } from '../../components/EditableForeignText';
 
 /* ----------------------------- types ---------------------------------- */
 
@@ -79,6 +82,7 @@ interface SavedConfig {
   formulaSize: number;
   legendSize: number;
   noteSize: number;
+  formats?: FormatStore;
   textOverrides?: TextOverrideMap;
 }
 
@@ -149,11 +153,13 @@ const DEFAULT_CONFIG: SavedConfig = {
   formulaSize: 12,
   legendSize: 11,
   noteSize: 11,
+  formats: {},
 };
 
 /* ----------------------------- persistence ---------------------------- */
 
 const STORAGE_KEY = 'gat-attention-configs-v1';
+
 
 /* ----------------------------- canvas ---------------------------- */
 
@@ -165,6 +171,14 @@ const H_FIG = 700;
 function GatAttentionChart() {
   const svgRef = useRef<SVGSVGElement>(null);
   const [cfg, setCfg] = useState<SavedConfig>(() => DEFAULT_CONFIG);
+  const {
+    selected,
+    handleSelectText,
+    handleClearSelection,
+    patchFormat: handlePatchFormat,
+    resetElementFormat: handleResetElementFormat,
+    resetAllFormats: handleResetAllFormats,
+  } = useTextFormat<SavedConfig>(setCfg);
 
   const patch = useCallback((p: Partial<SavedConfig>) => {
     setCfg((prev) => ({ ...prev, ...p }));
@@ -188,6 +202,7 @@ function GatAttentionChart() {
     [],
   );
 
+  /* ----------------------- config persistence ------------------------ */
   const buildBaseConfig = useCallback((): SavedConfig => cfg, [cfg]);
   const applyBaseConfig = useCallback((c: SavedConfig) => {
     if (!c || c.version !== 1) return;
@@ -380,6 +395,19 @@ function GatAttentionChart() {
               rows={2}
             />
           </ControlGroup>
+          <ControlGroup label="文字格式">
+            <button
+              type="button"
+              onClick={handleResetAllFormats}
+              className="w-full rounded border border-ink-600 px-2 py-1 text-[11px] text-ink-100 hover:bg-ink-800"
+            >
+              重置全部文本格式
+            </button>
+            <p className="text-[10px] leading-snug text-ink-300">
+              逐字段格式覆盖（字号 / 字重 / 斜体 / 行高 / 对齐 / 颜色）。
+              点击 SVG 中任一文字打开浮动工具栏。
+            </p>
+          </ControlGroup>
           {renderInspectorSections(textRefs)}
         </>
       }
@@ -465,6 +493,11 @@ function GatAttentionChart() {
             fontSize={cfg.titleSize}
             fontWeight={700}
             align="center"
+            kid="title"
+            label="主标题"
+            format={cfg.formats?.title}
+            selected={selected?.key === 'title'}
+            onSelect={handleSelectText}
           />
 
           {/* Edges */}
@@ -511,6 +544,11 @@ function GatAttentionChart() {
                       value={`$\\alpha_{ij}$=${a.toFixed(2)}`}
                       fontSize={cfg.edgeLabelSize}
                       align="center"
+                      kid={`alpha-${n.id}`}
+                      label={`边权 ${n.id}`}
+                      format={cfg.formats?.[`alpha-${n.id}`]}
+                      selected={selected?.key === `alpha-${n.id}`}
+                      onSelect={handleSelectText}
                     />
                   </g>
                 );
@@ -542,6 +580,11 @@ function GatAttentionChart() {
               fontWeight={600}
               align="center"
               color="white"
+              kid="centre-label"
+              label="中心节点标签"
+              format={cfg.formats?.['centre-label']}
+              selected={selected?.key === 'centre-label'}
+              onSelect={handleSelectText}
             />
           </g>
 
@@ -572,6 +615,11 @@ function GatAttentionChart() {
                 fontWeight={500}
                 align="center"
                 color="white"
+                kid={`node-${n.id}`}
+                label={`邻居节点 ${n.id}`}
+                format={cfg.formats?.[`node-${n.id}`]}
+                selected={selected?.key === `node-${n.id}`}
+                onSelect={handleSelectText}
               />
             </g>
           ))}
@@ -601,6 +649,11 @@ function GatAttentionChart() {
                 fontSize={cfg.formulaSize + 1}
                 fontWeight={600}
                 align="left"
+                kid="formulaTitle"
+                label="公式标题"
+                format={cfg.formats?.formulaTitle}
+                selected={selected?.key === 'formulaTitle'}
+                onSelect={handleSelectText}
               />
               <ForeignText
                 x={4}
@@ -610,6 +663,11 @@ function GatAttentionChart() {
                 value={cfg.formula}
                 fontSize={cfg.formulaSize}
                 align="left"
+                kid="formula"
+                label="公式正文"
+                format={cfg.formats?.formula}
+                selected={selected?.key === 'formula'}
+                onSelect={handleSelectText}
               />
             </g>
           ) : null}
@@ -640,6 +698,11 @@ function GatAttentionChart() {
                 fontSize={cfg.legendSize + 1}
                 fontWeight={600}
                 align="left"
+                kid="legendTitle"
+                label="图例标题"
+                format={cfg.formats?.legendTitle}
+                selected={selected?.key === 'legendTitle'}
+                onSelect={handleSelectText}
               />
               {(['eeg', 'fnirs', 'hetero'] as const).map((k, idx) => (
                 <g key={k} transform={`translate(0, ${idx * 22 + 24})`}>
@@ -652,6 +715,11 @@ function GatAttentionChart() {
                     value={k === 'eeg' ? 'EEG 通道' : k === 'fnirs' ? 'fNIRS 通道' : '异质中心'}
                     fontSize={cfg.legendSize}
                     align="left"
+                    kid={`legend-${k}`}
+                    label={`图例 ${k}`}
+                    format={cfg.formats?.[`legend-${k}`]}
+                    selected={selected?.key === `legend-${k}`}
+                    onSelect={handleSelectText}
                   />
                 </g>
               ))}
@@ -670,6 +738,11 @@ function GatAttentionChart() {
                 fontSize={cfg.legendSize + 1}
                 fontWeight={600}
                 align="left"
+                kid="colorBarTitle"
+                label="颜色条标题"
+                format={cfg.formats?.colorBarTitle}
+                selected={selected?.key === 'colorBarTitle'}
+                onSelect={handleSelectText}
               />
               {[
                 { label: '低 (<0.15)', c: cfg.strokeLow },
@@ -693,6 +766,11 @@ function GatAttentionChart() {
                     value={row.label}
                     fontSize={cfg.legendSize}
                     align="left"
+                    kid={`colorBar-${i}`}
+                    label={`颜色档 ${i}`}
+                    format={cfg.formats?.[`colorBar-${i}`]}
+                    selected={selected?.key === `colorBar-${i}`}
+                    onSelect={handleSelectText}
                   />
                 </g>
               ))}
@@ -719,7 +797,21 @@ function GatAttentionChart() {
             return (
               <g>
                 <rect x={X0} y={Y0} width={W} height={H} rx={6} fill="#FAFAFA" stroke="#CCC" />
-                <ForeignText x={X0 + 6} y={Y0 + 6} width={W - 12} height={22} value={`softmax 输出: $\\alpha_{ij}$ 分布 (∑=${sumA.toFixed(3)})`} fontSize={12} fontWeight={600} align="left" />
+                <ForeignText
+                  x={X0 + 6}
+                  y={Y0 + 6}
+                  width={W - 12}
+                  height={22}
+                  value={`softmax 输出: $\\alpha_{ij}$ 分布 (∑=${sumA.toFixed(3)})`}
+                  fontSize={12}
+                  fontWeight={600}
+                  align="left"
+                  kid="distTitle"
+                  label="分布图标题"
+                  format={cfg.formats?.distTitle}
+                  selected={selected?.key === 'distTitle'}
+                  onSelect={handleSelectText}
+                />
                 {/* y-axis ticks at 0, 0.25, 0.5, 0.75, 1.0 */}
                 {[0, 0.25, 0.5, 0.75, 1].map((t, k) => (
                   <g key={`ay-${k}`}>
@@ -745,6 +837,11 @@ function GatAttentionChart() {
                   value={`uniform $1/K$`}
                   fontSize={9}
                   align="right"
+                  kid="distUniform"
+                  label="均匀分布标记"
+                  format={cfg.formats?.distUniform}
+                  selected={selected?.key === 'distUniform'}
+                  onSelect={handleSelectText}
                 />
                 {alphas.map((a, i) => {
                   const xi = X0 + padL + (i + 0.15) * (innerW / n);
@@ -787,6 +884,11 @@ function GatAttentionChart() {
                   fontSize={12}
                   fontWeight={600}
                   align="left"
+                  kid="smTitle"
+                  label="softmax 计算面板标题"
+                  format={cfg.formats?.smTitle}
+                  selected={selected?.key === 'smTitle'}
+                  onSelect={handleSelectText}
                 />
                 <ForeignText
                   x={X0 + 6}
@@ -796,6 +898,11 @@ function GatAttentionChart() {
                   value={`$\\ell_{\\max}=${lmax.toFixed(2)}$,  $Z = \\sum_k \\exp(\\ell_k - \\ell_{\\max}) = ${Z.toFixed(3)}$`}
                   fontSize={10}
                   align="left"
+                  kid="smHeader"
+                  label="softmax 面板表头公式"
+                  format={cfg.formats?.smHeader}
+                  selected={selected?.key === 'smHeader'}
+                  onSelect={handleSelectText}
                 />
                 {/* Header */}
                 <ForeignText x={X0 + 8} y={Y0 + 48} width={36} height={12} value="$j_k$" fontSize={9} fontWeight={600} align="center" />
@@ -842,8 +949,60 @@ function GatAttentionChart() {
                 value={cfg.noteText}
                 fontSize={cfg.noteSize}
                 align={cfg.noteAlign}
+                kid="note"
+                label="黄色注释框"
+                format={cfg.formats?.note}
+                selected={selected?.key === 'note'}
+                onSelect={handleSelectText}
               />
             </g>
+          ) : null}
+
+          {selected ? (
+            <rect
+              x={0}
+              y={0}
+              width={W_FIG}
+              height={H_FIG}
+              fill="transparent"
+              pointerEvents="all"
+              onMouseDown={handleClearSelection}
+              data-export="false"
+              style={{ cursor: 'default' }}
+            />
+          ) : null}
+          {selected ? (
+            (() => {
+              const popoverWidth = 280;
+              const popoverHeight = 130;
+              const margin = 6;
+              const ax = Math.max(
+                4,
+                Math.min(
+                  W_FIG - popoverWidth - 4,
+                  selected.x + selected.w / 2 - popoverWidth / 2,
+                ),
+              );
+              const ay =
+                selected.y + selected.h + margin + popoverHeight > H_FIG
+                  ? Math.max(4, selected.y - popoverHeight - margin)
+                  : selected.y + selected.h + margin;
+              const popoverDefaults: TextFormatDefaults = selected.defaults;
+              return (
+                <TextFormatPopover
+                  anchorX={ax}
+                  anchorY={ay}
+                  width={popoverWidth}
+                  height={popoverHeight}
+                  override={cfg.formats?.[selected.key]}
+                  defaults={popoverDefaults}
+                  label={selected.label}
+                  onChange={(p) => handlePatchFormat(selected.key, p)}
+                  onReset={() => handleResetElementFormat(selected.key)}
+                  onClose={handleClearSelection}
+                />
+              );
+            })()
           ) : null}
         </FigureFrame>
       }
@@ -867,66 +1026,6 @@ const KIND_OPTIONS: ReadonlyArray<{ value: NodeSpec['kind']; label: string }> = 
   { value: 'fnirs', label: 'fNIRS' },
   { value: 'hetero', label: '异质中心' },
 ];
-
-function ForeignText({
-  x,
-  y,
-  width,
-  height,
-  value,
-  fontSize,
-  fontWeight,
-  align = 'left',
-  color,
-}: {
-  x: number;
-  y: number;
-  width: number;
-  height: number;
-  value: string;
-  fontSize: number;
-  fontWeight?: number;
-  align?: Align;
-  color?: string;
-}) {
-  const lines = value.split('\n');
-  const justify =
-    align === 'center'
-      ? 'center'
-      : align === 'right'
-      ? 'flex-end'
-      : 'flex-start';
-  return (
-    <foreignObject
-      x={x}
-      y={y}
-      width={width}
-      height={Math.max(height, lines.length * (fontSize + 4))}
-      data-latex={value}
-      data-latex-font-size={fontSize}
-      data-latex-font-weight={fontWeight ?? 400}
-    >
-      <div
-        style={{
-          display: 'flex',
-          flexDirection: 'column',
-          alignItems: justify,
-          textAlign: align as 'left' | 'center' | 'right',
-          fontFamily: 'Inter, "Noto Sans SC", system-ui, sans-serif',
-          fontSize,
-          fontWeight: fontWeight ?? 400,
-          color: color ?? '#1c1c1c',
-          lineHeight: 1.3,
-        }}
-        dangerouslySetInnerHTML={{
-          __html: lines
-            .map((l) => `<div>${l ? renderInlineLatex(l) : '&nbsp;'}</div>`)
-            .join(''),
-        }}
-      />
-    </foreignObject>
-  );
-}
 
 function useDragHandlers(
   svgRef: React.RefObject<SVGSVGElement | null>,

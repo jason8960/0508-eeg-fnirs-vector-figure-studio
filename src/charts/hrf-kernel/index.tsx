@@ -28,11 +28,17 @@ import {
 } from '../../components/Controls';
 import type { ExpertSchema } from '../../components/ExpertPanel';
 import { InspirationPanel } from '../../components/InspirationPanel';
-import { renderInlineLatex } from '../../lib/latex';
 import { registerChart } from '../../registry';
 import { buildLinearAxis } from '../../lib/scales';
 import { useEvalChartConfig } from '../../lib/useEvalChartConfig';
 import type { TextOverrideMap } from '../../lib/useTextOverrides';
+import { type FormatStore, type TextFormatDefaults } from '../../lib/textFormat';
+import { useTextFormat } from '../../lib/useTextFormat';
+import { TextFormatPopover } from '../../components/TextFormatPopover';
+import {
+  EditableForeignText as ForeignText,
+  type SelectedTextAnchor,
+} from '../../components/EditableForeignText';
 
 /* ----------------------------- types ---------------------------------- */
 
@@ -79,6 +85,8 @@ interface SavedConfig {
   axisLabelSize: number;
   legendSize: number;
   infoSize: number;
+  /** Per-element text-format overrides keyed by formatKey. */
+  formats?: FormatStore;
   textOverrides?: TextOverrideMap;
 }
 
@@ -120,6 +128,7 @@ const DEFAULT_CONFIG: SavedConfig = {
   axisLabelSize: 12,
   legendSize: 11,
   infoSize: 11,
+  formats: {},
 };
 
 /* ----------------------------- persistence ---------------------------- */
@@ -143,6 +152,15 @@ function HrfKernelChart() {
 
   // Live state
   const [cfg, setCfg] = useState<SavedConfig>(() => DEFAULT_CONFIG);
+  // Per-element text-format selection / patch helpers.
+  const {
+    selected,
+    handleSelectText,
+    handleClearSelection,
+    patchFormat: handlePatchFormat,
+    resetElementFormat: handleResetElementFormat,
+    resetAllFormats: handleResetAllFormats,
+  } = useTextFormat<SavedConfig>(setCfg);
 
   /* ----------------------- patches ------------------------ */
   const patch = useCallback((p: Partial<SavedConfig>) => {
@@ -160,6 +178,7 @@ function HrfKernelChart() {
     [],
   );
 
+  /* ----------------------- config persistence ------------------------ */
   const buildBaseConfig = useCallback((): SavedConfig => cfg, [cfg]);
   const applyBaseConfig = useCallback((c: SavedConfig) => {
     if (!c || c.version !== 1) return;
@@ -397,6 +416,19 @@ function HrfKernelChart() {
               onChange={(v) => patch({ showInfoBox: v })}
             />
           </ControlGroup>
+          <ControlGroup label="文字格式">
+            <button
+              type="button"
+              onClick={handleResetAllFormats}
+              className="w-full rounded border border-ink-600 px-2 py-1 text-[11px] text-ink-100 hover:bg-ink-800"
+            >
+              重置全部文本格式
+            </button>
+            <p className="text-[10px] leading-snug text-ink-300">
+              逐字段格式覆盖（字号 / 字重 / 斜体 / 行高 / 对齐 / 颜色）。
+              点击 SVG 中任一文字打开浮动工具栏。
+            </p>
+          </ControlGroup>
           {renderInspectorSections(textRefs)}
         </>
       }
@@ -462,6 +494,11 @@ function HrfKernelChart() {
             fontSize={cfg.titleSize}
             fontWeight={700}
             align="center"
+            kid="title"
+            label="主标题"
+            format={cfg.formats?.title}
+            selected={selected?.key === 'title'}
+            onSelect={handleSelectText}
           />
 
           {/* Subtitles */}
@@ -474,6 +511,11 @@ function HrfKernelChart() {
             fontSize={cfg.subtitleSize}
             fontWeight={500}
             align="center"
+            kid="subtitleA"
+            label="(a) 子标题"
+            format={cfg.formats?.subtitleA}
+            selected={selected?.key === 'subtitleA'}
+            onSelect={handleSelectText}
           />
           <ForeignText
             x={PANEL_B.x0}
@@ -484,6 +526,11 @@ function HrfKernelChart() {
             fontSize={cfg.subtitleSize}
             fontWeight={500}
             align="center"
+            kid="subtitleB"
+            label="(b) 子标题"
+            format={cfg.formats?.subtitleB}
+            selected={selected?.key === 'subtitleB'}
+            onSelect={handleSelectText}
           />
 
           {/* Panel (a) */}
@@ -493,6 +540,13 @@ function HrfKernelChart() {
             yLabel={cfg.axisAY}
             showGrid={cfg.showGrid}
             axisLabelSize={cfg.axisLabelSize}
+            xLabelKid="axisAX"
+            yLabelKid="axisAY"
+            xLabelLabel="(a) X 轴"
+            yLabelLabel="(a) Y 轴"
+            formats={cfg.formats}
+            selectedKey={selected?.key}
+            onSelectText={handleSelectText}
           />
           {/* (a) FWHM bands: a horizontal segment at half-max with arrow caps */}
           <g>
@@ -605,6 +659,13 @@ function HrfKernelChart() {
             yLabel={cfg.axisBY}
             showGrid={cfg.showGrid}
             axisLabelSize={cfg.axisLabelSize}
+            xLabelKid="axisBX"
+            yLabelKid="axisBY"
+            xLabelLabel="(b) X 轴"
+            yLabelLabel="(b) Y 轴"
+            formats={cfg.formats}
+            selectedKey={selected?.key}
+            onSelectText={handleSelectText}
           />
           {/* τ_min / τ_max dashed asymptotes + labels */}
           <g>
@@ -712,27 +773,35 @@ function HrfKernelChart() {
                 fillOpacity={0.92}
                 stroke="#999"
               />
-              {cfg.curves.map((c, i) => (
-                <g key={i} transform={`translate(0, ${i * 22 + 8})`}>
-                  <line
-                    x1={2}
-                    x2={28}
-                    y1={6}
-                    y2={6}
-                    stroke={c.color}
-                    strokeWidth={2.6}
-                  />
-                  <ForeignText
-                    x={36}
-                    y={-6}
-                    width={110}
-                    height={22}
-                    value={c.label}
-                    fontSize={cfg.legendSize}
-                    align="left"
-                  />
-                </g>
-              ))}
+              {cfg.curves.map((c, i) => {
+                const kid = `legend-${i}`;
+                return (
+                  <g key={i} transform={`translate(0, ${i * 22 + 8})`}>
+                    <line
+                      x1={2}
+                      x2={28}
+                      y1={6}
+                      y2={6}
+                      stroke={c.color}
+                      strokeWidth={2.6}
+                    />
+                    <ForeignText
+                      x={36}
+                      y={-6}
+                      width={110}
+                      height={22}
+                      value={c.label}
+                      fontSize={cfg.legendSize}
+                      align="left"
+                      kid={kid}
+                      label={`图例 ${i + 1}`}
+                      format={cfg.formats?.[kid]}
+                      selected={selected?.key === kid}
+                      onSelect={handleSelectText}
+                    />
+                  </g>
+                );
+              })}
             </g>
           ) : null}
 
@@ -760,8 +829,65 @@ function HrfKernelChart() {
                 value={cfg.infoBoxText}
                 fontSize={cfg.infoSize}
                 align={cfg.infoBoxAlign}
+                kid="infoBox"
+                label="信息框"
+                format={cfg.formats?.infoBox}
+                selected={selected?.key === 'infoBox'}
+                onSelect={handleSelectText}
               />
             </g>
+          ) : null}
+
+          {/* Click-outside catcher: clears selection. Below all interactive
+              text overlays so it only fires when nothing else captured the click. */}
+          {selected ? (
+            <rect
+              x={0}
+              y={0}
+              width={W_FIG}
+              height={H_FIG}
+              fill="transparent"
+              pointerEvents="all"
+              onMouseDown={handleClearSelection}
+              data-export="false"
+              style={{ cursor: 'default' }}
+            />
+          ) : null}
+
+          {/* Floating text-format popover (foreignObject; data-export="false"
+              so it is stripped from the exported SVG). */}
+          {selected ? (
+            (() => {
+              const popoverWidth = 280;
+              const popoverHeight = 130;
+              const margin = 6;
+              const ax = Math.max(
+                4,
+                Math.min(
+                  W_FIG - popoverWidth - 4,
+                  selected.x + selected.w / 2 - popoverWidth / 2,
+                ),
+              );
+              const ay =
+                selected.y + selected.h + margin + popoverHeight > H_FIG
+                  ? Math.max(4, selected.y - popoverHeight - margin)
+                  : selected.y + selected.h + margin;
+              const popoverDefaults: TextFormatDefaults = selected.defaults;
+              return (
+                <TextFormatPopover
+                  anchorX={ax}
+                  anchorY={ay}
+                  width={popoverWidth}
+                  height={popoverHeight}
+                  override={cfg.formats?.[selected.key]}
+                  defaults={popoverDefaults}
+                  label={selected.label}
+                  onChange={(p) => handlePatchFormat(selected.key, p)}
+                  onReset={() => handleResetElementFormat(selected.key)}
+                  onClose={handleClearSelection}
+                />
+              );
+            })()
           ) : null}
         </FigureFrame>
       }
@@ -821,12 +947,26 @@ function PanelChrome({
   yLabel,
   showGrid,
   axisLabelSize,
+  xLabelKid,
+  yLabelKid,
+  xLabelLabel,
+  yLabelLabel,
+  formats,
+  selectedKey,
+  onSelectText,
 }: {
   ax: PanelAxes;
   xLabel: string;
   yLabel: string;
   showGrid: boolean;
   axisLabelSize: number;
+  xLabelKid?: string;
+  yLabelKid?: string;
+  xLabelLabel?: string;
+  yLabelLabel?: string;
+  formats?: FormatStore;
+  selectedKey?: string;
+  onSelectText?: (anchor: SelectedTextAnchor) => void;
 }) {
   return (
     <g>
@@ -907,6 +1047,11 @@ function PanelChrome({
         value={xLabel}
         fontSize={axisLabelSize}
         align="center"
+        kid={xLabelKid}
+        label={xLabelLabel}
+        format={xLabelKid ? formats?.[xLabelKid] : undefined}
+        selected={!!xLabelKid && selectedKey === xLabelKid}
+        onSelect={onSelectText}
       />
       {/* Y axis label (rotated) */}
       <g
@@ -920,70 +1065,14 @@ function PanelChrome({
           value={yLabel}
           fontSize={axisLabelSize}
           align="center"
+          kid={yLabelKid}
+          label={yLabelLabel}
+          format={yLabelKid ? formats?.[yLabelKid] : undefined}
+          selected={!!yLabelKid && selectedKey === yLabelKid}
+          onSelect={onSelectText}
         />
       </g>
     </g>
-  );
-}
-
-function ForeignText({
-  x,
-  y,
-  width,
-  height,
-  value,
-  fontSize,
-  fontWeight,
-  align = 'left',
-  color,
-}: {
-  x: number;
-  y: number;
-  width: number;
-  height: number;
-  value: string;
-  fontSize: number;
-  fontWeight?: number;
-  align?: Align;
-  color?: string;
-}) {
-  const lines = value.split('\n');
-  const justify =
-    align === 'center'
-      ? 'center'
-      : align === 'right'
-      ? 'flex-end'
-      : 'flex-start';
-  return (
-    <foreignObject
-      x={x}
-      y={y}
-      width={width}
-      height={Math.max(height, lines.length * (fontSize + 4))}
-      data-latex={value}
-      data-latex-font-size={fontSize}
-      data-latex-font-weight={fontWeight ?? 400}
-    >
-      <div
-        style={{
-          display: 'flex',
-          flexDirection: 'column',
-          alignItems: justify,
-          textAlign: align as 'left' | 'center' | 'right',
-          fontFamily:
-            'Inter, "Noto Sans SC", system-ui, sans-serif',
-          fontSize,
-          fontWeight: fontWeight ?? 400,
-          color: color ?? '#1c1c1c',
-          lineHeight: 1.3,
-        }}
-        dangerouslySetInnerHTML={{
-          __html: lines
-            .map((l) => `<div>${l ? renderInlineLatex(l) : '&nbsp;'}</div>`)
-            .join(''),
-        }}
-      />
-    </foreignObject>
   );
 }
 
