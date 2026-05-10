@@ -31,6 +31,11 @@ import { registerChart } from '../../registry';
 import { buildLinearAxis } from '../../lib/scales';
 import { useEvalChartConfig } from '../../lib/useEvalChartConfig';
 import type { TextOverrideMap } from '../../lib/useTextOverrides';
+import {
+  useLatestPythonEmitter,
+  type PythonEmitter,
+} from '../../lib/pythonExport';
+import { emitHrfAlignmentPython } from './python';
 
 /* ----------------------------- types ---------------------------------- */
 
@@ -241,11 +246,14 @@ function HrfAlignmentChart() {
     if (!c || c.version !== 1) return;
     setCfg(c);
   }, []);
+  const pythonEmitterRef = useRef<PythonEmitter | null>(null);
   const { renderInspectorSections } = useEvalChartConfig<SavedConfig>({
     storageKey: STORAGE_KEY,
     buildBaseConfig,
     applyBaseConfig,
     filename: 'hrf-alignment-config.json',
+    pythonEmitterRef,
+    pythonFilename: 'hrf-alignment.py',
   });
   const textRefs = useMemo(() => [], []);
 
@@ -310,6 +318,37 @@ function HrfAlignmentChart() {
     });
     return lines.join('\n');
   }, [cfg.signals, eeg, tracesAfter]);
+
+  useLatestPythonEmitter(pythonEmitterRef, () =>
+    emitHrfAlignmentPython({
+      title: cfg.title,
+      subtitleA: cfg.subtitleA,
+      subtitleB: cfg.subtitleB,
+      axisX: cfg.axisX,
+      axisY: cfg.axisY,
+      tMin: cfg.tMin,
+      tMax: cfg.tMax,
+      bandStart: cfg.bandStart,
+      bandEnd: cfg.bandEnd,
+      showHighlight: cfg.showHighlight,
+      showGrid: cfg.showGrid,
+      showLegend: cfg.showLegend,
+      showCorr: cfg.showCorr,
+      signals: cfg.signals.map((s) => ({
+        label: s.label,
+        color: s.color,
+        sign: s.sign,
+        visible: s.visible,
+      })),
+      times,
+      tracesBefore,
+      tracesAfter,
+      corrBefore,
+      corrAfter,
+      noteText: cfg.noteText,
+      showNote: cfg.showNote,
+    }),
+  );
 
   /* ----------------------- axes ------------------------ */
   const axA = buildPanelAxes({

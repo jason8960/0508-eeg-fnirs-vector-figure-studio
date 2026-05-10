@@ -44,6 +44,11 @@ import { usePanelDrag } from '../../lib/usePanelDrag';
 import { renderInlineLatex } from '../../lib/latex';
 import { useEvalChartConfig } from '../../lib/useEvalChartConfig';
 import type { TextOverrideMap } from '../../lib/useTextOverrides';
+import {
+  useLatestPythonEmitter,
+  type PythonEmitter,
+} from '../../lib/pythonExport';
+import { emitHetGraphPython } from './python';
 
 /* ---------------------------- model types ----------------------------- */
 
@@ -517,11 +522,14 @@ function HeterogeneousGraphChart() {
     setVfBannerOverride(cfg.vfBannerOverride ?? null);
   }, []);
 
+  const pythonEmitterRef = useRef<PythonEmitter | null>(null);
   const { renderInspectorSections } = useEvalChartConfig<SavedConfig>({
     storageKey: STORAGE_KEY,
     buildBaseConfig: buildCurrentConfig,
     applyBaseConfig: applyConfig,
     filename: 'heterogeneous-graph-construction.json',
+    pythonEmitterRef,
+    pythonFilename: 'heterogeneous-graph-construction.py',
   });
   const textRefs = useMemo(() => [], []);
 
@@ -574,6 +582,105 @@ function HeterogeneousGraphChart() {
   const vfBannerText =
     vfBannerOverride ??
     '$\\mathbf{V}^{F}$ : fNIRS nodes  ·  illustrative; $|\\mathbf{V}^{F}|=N_F$ (dataset-dependent, 10–48)';
+
+  useLatestPythonEmitter(pythonEmitterRef, () => {
+    const visibleEdgeStyles: Record<EdgeKind, EdgeKindStyle> = edgeStyles;
+    const lineFromBody = (line: SidePanelLine): string => {
+      if (line.kind === 'swatch') return `■ ${line.label}`;
+      if (line.kind === 'math') return line.text;
+      return '';
+    };
+    const stripLatex = (s: string) =>
+      s
+        .replace(/\$([^$]+)\$/g, '$1')
+        .replace(/\\mathbf\s*\{([^}]+)\}/g, '$1')
+        .replace(/\\Vert/g, '‖')
+        .replace(/\\rightarrow/g, '→')
+        .replace(/\\tau/g, 'τ')
+        .replace(/\\sigma/g, 'σ')
+        .replace(/\\rho/g, 'ρ')
+        .replace(/\\gamma/g, 'γ')
+        .replace(/\\ell/g, 'ℓ')
+        .replace(/\\top/g, '⊤')
+        .replace(/\\;|\\,/g, ' ')
+        .replace(/_\{([^}]+)\}/g, '$1')
+        .replace(/\^\{([^}]+)\}/g, '^$1')
+        .replace(/[{}]/g, '')
+        .replace(/\\([A-Za-z]+)/g, '$1');
+
+    return emitHetGraphPython({
+      width: W_FIG,
+      height: H_FIG,
+      nodeR: NODE_R,
+      title: titleText,
+      subtitle: subtitleText,
+      showSubtitle: toggles.showSubtitle,
+      hrfTag: hrfTagText,
+      showHrfTag: toggles.showHrfTag && edgeStyles.cross.visible,
+      veBanner: veBannerText,
+      showVeBanner: toggles.showVeBanner,
+      vfBanner: vfBannerText,
+      showVfBanner: toggles.showVfBanner,
+      showLegendDivider: toggles.showLegendDivider,
+      nodes: resolvedNodes.map((n) => ({
+        id: n.id,
+        label: n.label,
+        modality: n.modality,
+        x: n.x,
+        y: n.y,
+        hidden: nodeOverrides[n.id]?.hidden === true,
+      })),
+      edges: ALL_EDGES.flatMap((e) => {
+        const style = visibleEdgeStyles[e.kind];
+        if (!style.visible) return [];
+        return [
+          {
+            fromId: e.from,
+            toId: e.to,
+            kind: e.kind,
+            color: style.color,
+            width: style.width,
+            alpha: style.alpha,
+            dashed: style.dashed,
+            curve: style.curve,
+          },
+        ];
+      }),
+      panels: sidePanelsConfig
+        .filter((p) => sidePanels[p.key].visible)
+        .map((p) => ({
+          title: p.title,
+          fill: p.fill,
+          edge: p.edge,
+          x: PX,
+          y: p.y,
+          w: PW,
+          h: p.height,
+          lines: p.body
+            .filter((line) => line.kind !== 'gap')
+            .map((line, idx) => {
+              const ov = sidePanels[p.key].bodyOverrides[idx];
+              if (ov !== undefined) return stripLatex(ov);
+              return stripLatex(lineFromBody(line));
+            }),
+        })),
+      colors: {
+        eegFill: COL.eegFill,
+        eegEdge: COL.eegEdge,
+        fnirsFill: COL.fnirsFill,
+        fnirsEdge: COL.fnirsEdge,
+        veBanner: COL.intraEeg,
+        vfBanner: COL.intraFn,
+        dim: COL.dim,
+      },
+      arcCy: ARC_CY,
+      arcRx: ARC_RX,
+      arcRy: ARC_RY,
+      fnirsY: FNIRS_Y,
+      graphX0: GX0,
+      graphX1: GX1,
+    });
+  });
 
   /* -- expert schema (for ExpertPanel) --------------------------------- */
 
