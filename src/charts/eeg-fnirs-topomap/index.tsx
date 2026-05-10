@@ -17,6 +17,7 @@ import type { ParsedDataset } from '../../workers/dataParser.worker';
 import { registerChart } from '../../registry';
 import { EditableSvgText } from '../../components/EditableSvgText';
 import { useEvalChartConfig } from '../../lib/useEvalChartConfig';
+import { useLatestPythonEmitter, type PythonEmitter } from '../../lib/pythonExport';
 import type { TextOverrideMap } from '../../lib/useTextOverrides';
 import {
   EEG_10_20,
@@ -24,6 +25,7 @@ import {
   FNIRS_PAIRS,
   getOptode,
 } from './positions';
+import { emitEegFnirsTopomapPython } from './python';
 
 interface SavedConfig {
   version: 1;
@@ -153,11 +155,14 @@ function TopomapChart() {
     setShowLabels(cfg.showLabels);
     setFrameSec(cfg.frameSec);
   }, []);
+  const pythonEmitterRef = useRef<PythonEmitter | null>(null);
   const { textOverrides, renderInspectorSections } = useEvalChartConfig<SavedConfig>({
     storageKey: STORAGE_KEY,
     buildBaseConfig,
     applyBaseConfig,
     filename: 'eeg-fnirs-topomap-config.json',
+    pythonEmitterRef,
+    pythonFilename: 'eeg-fnirs-topomap.py',
   });
 
   const { status } = useDataset();
@@ -318,6 +323,31 @@ function TopomapChart() {
       { id: legendPathId, label: '图例：光子路径', defaultText: legendPathDefault, defaultFontSize: 11 },
     ],
     [],
+  );
+
+  useLatestPythonEmitter(pythonEmitterRef, () =>
+    emitEegFnirsTopomapPython({
+      title: titleStyle.text,
+      caption: captionStyle.text,
+      electrodes: EEG_10_20.map((e) => ({ name: e.name, x: e.x, y: e.y })),
+      values: field.values,
+      optodes: FNIRS_OPTODES.map((o) => ({
+        name: o.name,
+        x: o.x,
+        y: o.y,
+        type: o.type,
+      })),
+      pairs: FNIRS_PAIRS.map((p) => ({ source: p.source, detector: p.detector })),
+      showEeg,
+      showFnirs,
+      eegOpacity,
+      showLabels,
+      resolution,
+      colormapName: colormap,
+      legendSource: legendSourceStyle.text,
+      legendDetector: legendDetectorStyle.text,
+      legendPath: legendPathStyle.text,
+    }),
   );
 
   return (

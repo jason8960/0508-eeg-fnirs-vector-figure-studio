@@ -16,7 +16,9 @@ import type { ExpertSchema } from '../../components/ExpertPanel';
 import { InspirationPanel } from '../../components/InspirationPanel';
 import { registerChart } from '../../registry';
 import { useEvalChartConfig } from '../../lib/useEvalChartConfig';
+import { useLatestPythonEmitter, type PythonEmitter } from '../../lib/pythonExport';
 import type { TextOverrideMap } from '../../lib/useTextOverrides';
+import { emitLeadLagMatrixPython } from './python';
 
 interface SavedConfig {
   version: 1;
@@ -76,11 +78,14 @@ function LeadLagChart() {
     setPSeed(cfg.pSeed);
     setShowLabels(cfg.showLabels);
   }, []);
+  const pythonEmitterRef = useRef<PythonEmitter | null>(null);
   const { textOverrides, renderInspectorSections } = useEvalChartConfig<SavedConfig>({
     storageKey: STORAGE_KEY,
     buildBaseConfig,
     applyBaseConfig,
     filename: 'lead-lag-matrix-config.json',
+    pythonEmitterRef,
+    pythonFilename: 'lead-lag-matrix.py',
   });
 
   const expertSchema: ExpertSchema = [
@@ -142,6 +147,25 @@ function LeadLagChart() {
       { id: captionId, label: '说明文字', defaultText: captionDefault, defaultFontSize: 12 },
     ];
   }, [titleDefault, captionDefault]);
+
+  const rowLabels = useMemo(
+    () => Array.from({ length: n }, (_, i) => regionLabel(i, eegCount)),
+    [n, eegCount],
+  );
+  useLatestPythonEmitter(pythonEmitterRef, () =>
+    emitLeadLagMatrixPython({
+      title: titleStyle.text,
+      caption: captionStyle.text,
+      lags,
+      pvals,
+      rowLabels,
+      colLabels: rowLabels,
+      colormapName: colormap,
+      showStars,
+      showLabels,
+      eegCount,
+    }),
+  );
 
   return (
     <ChartShell

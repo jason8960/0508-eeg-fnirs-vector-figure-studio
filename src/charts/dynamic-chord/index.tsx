@@ -14,7 +14,9 @@ import { InspirationPanel } from '../../components/InspirationPanel';
 import { registerChart } from '../../registry';
 import { EditableSvgText } from '../../components/EditableSvgText';
 import { useEvalChartConfig } from '../../lib/useEvalChartConfig';
+import { useLatestPythonEmitter, type PythonEmitter } from '../../lib/pythonExport';
 import type { TextOverrideMap } from '../../lib/useTextOverrides';
+import { emitDynamicChordPython } from './python';
 
 const REGIONS = [
   'L. Frontal',
@@ -96,11 +98,14 @@ function DynamicChordChart() {
     setPadAngle(cfg.padAngle);
     setRibbonOpacity(cfg.ribbonOpacity);
   }, []);
+  const pythonEmitterRef = useRef<PythonEmitter | null>(null);
   const { textOverrides, renderInspectorSections } = useEvalChartConfig<SavedConfig>({
     storageKey: STORAGE_KEY,
     buildBaseConfig,
     applyBaseConfig,
     filename: 'dynamic-chord-config.json',
+    pythonEmitterRef,
+    pythonFilename: 'dynamic-chord.py',
   });
 
   const expertSchema: ExpertSchema = [
@@ -185,6 +190,23 @@ function DynamicChordChart() {
     });
     return refs;
   }, [titleDefault]);
+
+  useLatestPythonEmitter(pythonEmitterRef, () =>
+    emitDynamicChordPython({
+      title: titleStyle.text,
+      caption: captionStyle.text,
+      regions: REGIONS,
+      regionLabels: REGIONS.map(
+        (r) =>
+          textOverrides.resolve(`region-${r}`, { text: r, fontSize: 11, fontWeight: 500 }).text,
+      ),
+      slice,
+      palette,
+      padAngle,
+      ribbonOpacity,
+      t,
+    }),
+  );
 
   return (
     <ChartShell

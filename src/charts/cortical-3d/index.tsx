@@ -12,6 +12,7 @@ import { InspirationPanel } from '../../components/InspirationPanel';
 import { registerChart } from '../../registry';
 import { EditableSvgText } from '../../components/EditableSvgText';
 import { useEvalChartConfig } from '../../lib/useEvalChartConfig';
+import { useLatestPythonEmitter, type PythonEmitter } from '../../lib/pythonExport';
 import type { TextOverrideMap } from '../../lib/useTextOverrides';
 import {
   activationAt,
@@ -20,6 +21,7 @@ import {
   rotate,
   type Vec3,
 } from './mesh';
+import { emitCortical3dPython } from './python';
 
 interface SavedConfig {
   version: 1;
@@ -73,11 +75,14 @@ function CorticalChart() {
     setMeshLat(cfg.meshLat);
     setMeshLong(cfg.meshLong);
   }, []);
+  const pythonEmitterRef = useRef<PythonEmitter | null>(null);
   const { textOverrides, renderInspectorSections } = useEvalChartConfig<SavedConfig>({
     storageKey: STORAGE_KEY,
     buildBaseConfig,
     applyBaseConfig,
     filename: 'cortical-3d-config.json',
+    pythonEmitterRef,
+    pythonFilename: 'cortical-3d.py',
   });
 
   const expertSchema: ExpertSchema = [
@@ -149,6 +154,21 @@ function CorticalChart() {
       { id: colorbarLabelId, label: '色条标签', defaultText: colorbarLabelDefault, defaultFontSize: 11 },
     ],
     [],
+  );
+
+  useLatestPythonEmitter(pythonEmitterRef, () =>
+    emitCortical3dPython({
+      title: titleStyle.text,
+      caption: captionStyle.text,
+      yaw,
+      pitch,
+      colormapName: colormap,
+      opacity,
+      meshLat,
+      meshLong,
+      hotspots: DEFAULT_HOTSPOTS,
+      colorbarLabel: colorbarLabelStyle.text,
+    }),
   );
 
   const triangles = useMemo<ProjectedTri[]>(() => {
