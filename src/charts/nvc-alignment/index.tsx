@@ -21,7 +21,9 @@ import { bandpass, decimate, rmsEnvelope } from '../../lib/signal';
 import { registerChart } from '../../registry';
 import { EditableSvgText } from '../../components/EditableSvgText';
 import { useEvalChartConfig } from '../../lib/useEvalChartConfig';
+import { useLatestPythonEmitter, type PythonEmitter } from '../../lib/pythonExport';
 import type { TextOverrideMap } from '../../lib/useTextOverrides';
+import { emitNvcAlignmentPython } from './python';
 
 interface SavedConfig {
   version: 1;
@@ -96,11 +98,14 @@ function NVCChart() {
     setShowAlphaEnv(cfg.showAlphaEnv);
     setAlphaWinSec(cfg.alphaWinSec);
   }, []);
+  const pythonEmitterRef = useRef<PythonEmitter | null>(null);
   const { textOverrides, renderInspectorSections } = useEvalChartConfig<SavedConfig>({
     storageKey: STORAGE_KEY,
     buildBaseConfig,
     applyBaseConfig,
     filename: 'nvc-alignment-config.json',
+    pythonEmitterRef,
+    pythonFilename: 'nvc-alignment.py',
   });
 
   const { status } = useDataset();
@@ -417,6 +422,29 @@ function NVCChart() {
       { id: legendAlphaId, label: '图例：α包络', defaultText: legendAlphaDefault, defaultFontSize: 11 },
     ],
     [],
+  );
+
+  useLatestPythonEmitter(pythonEmitterRef, () =>
+    emitNvcAlignmentPython({
+      title: titleStyle.text,
+      caption: captionStyle.text,
+      duration,
+      eegT: eeg.t,
+      eegV: eeg.v,
+      hboT: hbo.t,
+      hboV: hbo.v,
+      hbrT: hbr.t,
+      hbrV: hbr.v,
+      alphaT: alphaEnv ? alphaEnv.t : null,
+      alphaV: alphaEnv ? alphaEnv.v : null,
+      showBands,
+      bands: BANDS,
+      legendEeg: legendEegStyle.text,
+      legendHbo: legendHboStyle.text,
+      legendHbr: legendHbrStyle.text,
+      legendAlpha: legendAlphaStyle.text,
+      hbrCoupling,
+    }),
   );
 
   return (

@@ -15,7 +15,9 @@ import { InspirationPanel } from '../../components/InspirationPanel';
 import { registerChart } from '../../registry';
 import { EditableSvgText } from '../../components/EditableSvgText';
 import { useEvalChartConfig } from '../../lib/useEvalChartConfig';
+import { useLatestPythonEmitter, type PythonEmitter } from '../../lib/pythonExport';
 import type { TextOverrideMap } from '../../lib/useTextOverrides';
+import { emitSeizureFocusPython } from './python';
 
 interface SavedConfig {
   version: 1;
@@ -112,11 +114,14 @@ function SeizureFocusChart() {
     setSeed(cfg.seed);
     setLabelOpacity(cfg.labelOpacity);
   }, []);
+  const pythonEmitterRef = useRef<PythonEmitter | null>(null);
   const { textOverrides, renderInspectorSections } = useEvalChartConfig<SavedConfig>({
     storageKey: STORAGE_KEY,
     buildBaseConfig,
     applyBaseConfig,
     filename: 'seizure-focus-config.json',
+    pythonEmitterRef,
+    pythonFilename: 'seizure-focus.py',
   });
 
   const expertSchema: ExpertSchema = [
@@ -204,6 +209,36 @@ function SeizureFocusChart() {
     });
     return refs;
   }, []);
+
+  useLatestPythonEmitter(pythonEmitterRef, () => {
+    const field2d: number[][] = [];
+    for (let i = 0; i < gridSize; i++) {
+      const row: number[] = [];
+      for (let j = 0; j < gridSize; j++) {
+        row.push(field[i * gridSize + j]);
+      }
+      field2d.push(row);
+    }
+    return emitSeizureFocusPython({
+      title: titleStyle.text,
+      caption: captionStyle.text,
+      field: field2d,
+      gridSize,
+      thresholds,
+      colormapName: colormap,
+      showLandmarks,
+      labelOpacity,
+      landmarks: LANDMARKS,
+      landmarkLabels: LANDMARKS.map(
+        (l) =>
+          textOverrides.resolve(`landmark-${l.name}`, {
+            text: l.name,
+            fontSize: 11,
+            fontWeight: 500,
+          }).text,
+      ),
+    });
+  });
 
   return (
     <ChartShell
