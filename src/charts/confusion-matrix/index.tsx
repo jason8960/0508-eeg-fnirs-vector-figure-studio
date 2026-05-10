@@ -17,7 +17,12 @@ import {
 import { registerChart } from '../../registry';
 import { EditableSvgText } from '../../components/EditableSvgText';
 import { useEvalChartConfig } from '../../lib/useEvalChartConfig';
+import {
+  useLatestPythonEmitter,
+  type PythonEmitter,
+} from '../../lib/pythonExport';
 import type { TextOverrideMap } from '../../lib/useTextOverrides';
+import { emitConfusionMatrixPython } from './python';
 
 const DEFAULT_LABELS = ['Inter-ictal', 'Pre-ictal', 'Ictal', 'Post-ictal'];
 
@@ -95,6 +100,7 @@ function ConfusionMatrixChart() {
     setNormalize(cfg.normalize);
     setColormap(cfg.colormap);
   }, []);
+  const pythonEmitterRef = useRef<PythonEmitter | null>(null);
   const { textOverrides, renderInspectorSections } = useEvalChartConfig<
     SavedConfig
   >({
@@ -102,6 +108,8 @@ function ConfusionMatrixChart() {
     buildBaseConfig,
     applyBaseConfig,
     filename: 'confusion-matrix-config.json',
+    pythonEmitterRef,
+    pythonFilename: 'confusion-matrix.py',
   });
   const cm = useMemo(
     () => buildConfusionMatrix({ seed, n, labels, separation }),
@@ -173,6 +181,21 @@ function ConfusionMatrixChart() {
     fontSize: 12,
     fontWeight: 600,
   });
+
+  useLatestPythonEmitter(pythonEmitterRef, () =>
+    emitConfusionMatrixPython({
+      title: titleStyle.text,
+      caption: captionStyle.text,
+      trueLabel: trueLabelStyle.text,
+      predictedLabel: predictedLabelStyle.text,
+      labels,
+      cm: cm.map((row) => Array.from(row)),
+      normalize,
+      colormapName: colormap,
+      separation,
+      n,
+    }),
+  );
 
   const textRefs = useMemo(() => {
     const refs: Array<{

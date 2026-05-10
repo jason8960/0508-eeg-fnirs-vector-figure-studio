@@ -18,6 +18,11 @@ import {
 import { registerChart } from '../../registry';
 import { EditableSvgText } from '../../components/EditableSvgText';
 import { useEvalChartConfig } from '../../lib/useEvalChartConfig';
+import {
+  useLatestPythonEmitter,
+  type PythonEmitter,
+} from '../../lib/pythonExport';
+import { emitHrfTauPython } from './python';
 import type { TextOverrideMap } from '../../lib/useTextOverrides';
 
 interface ScatterPoint {
@@ -160,6 +165,7 @@ function HrfTauRecoveryChart() {
     setLineWidth(cfg.lineWidth);
     setMarkerSize(cfg.markerSize);
   }, []);
+  const pythonEmitterRef = useRef<PythonEmitter | null>(null);
   const { textOverrides, renderInspectorSections } = useEvalChartConfig<
     SavedConfig
   >({
@@ -167,6 +173,8 @@ function HrfTauRecoveryChart() {
     buildBaseConfig,
     applyBaseConfig,
     filename: 'hrf-tau-recovery-config.json',
+    pythonEmitterRef,
+    pythonFilename: 'hrf-tau-recovery.py',
   });
 
   const expertSchema: ExpertSchema = [
@@ -368,6 +376,26 @@ function HrfTauRecoveryChart() {
     fontSize: 13,
     fontWeight: 600,
   });
+
+  useLatestPythonEmitter(pythonEmitterRef, () =>
+    emitHrfTauPython({
+      title: titleStyle.text,
+      caption: captionStyle.text,
+      groundTruth: scatterData.map((p) => p.groundTruth),
+      learned: scatterData.map((p) => p.learned),
+      noiseLevels: noiseCurveData.map((d) => d.noiseLevel),
+      oursError: noiseCurveData.map((d) => d.oursError),
+      baselineError: noiseCurveData.map((d) => d.baselineError),
+      showIdeal,
+      showFit,
+      showOurs,
+      showBaseline,
+      metricsR: metrics.r,
+      metricsMae: metrics.mae,
+      metricsSlope: metrics.slope,
+      metricsIntercept: metrics.intercept,
+    }),
+  );
   const textRefs = useMemo(() => {
     return [
       { id: titleId, label: '主标题', defaultText: titleDefault, defaultFontSize: 14, defaultFontWeight: 600 },

@@ -24,8 +24,10 @@ import {
   type RocCurve,
   type PrCurve,
 } from './metrics';
+import { emitRocPrPython } from './python';
 import { EditableSvgText } from '../../components/EditableSvgText';
 import { useEvalChartConfig } from '../../lib/useEvalChartConfig';
+import { useLatestPythonEmitter, type PythonEmitter } from '../../lib/pythonExport';
 import type {
   TextOverrideMap,
   UseTextOverridesResult,
@@ -87,6 +89,7 @@ function RocPrChart() {
     setBootstrapIter(cfg.bootstrapIter);
     setPrevalence(cfg.prevalence);
   }, []);
+  const pythonEmitterRef = useRef<PythonEmitter | null>(null);
   const { textOverrides, renderInspectorSections } = useEvalChartConfig<
     SavedConfig
   >({
@@ -94,6 +97,8 @@ function RocPrChart() {
     buildBaseConfig,
     applyBaseConfig,
     filename: 'roc-pr-config.json',
+    pythonEmitterRef,
+    pythonFilename: 'roc-pr.py',
   });
 
   const models = useMemo<ComputedModel[]>(() => {
@@ -174,6 +179,30 @@ function RocPrChart() {
     text: `AUC ranges with 95% CI from a bootstrap (B=${bootstrapIter}). Synthetic data, n=${n}.`,
     fontSize: 12,
   });
+  const rocPanelTitleStyle = textOverrides.resolve('panel-roc-title', {
+    text: 'ROC',
+    fontSize: 13,
+    fontWeight: 600,
+  });
+  const prPanelTitleStyle = textOverrides.resolve('panel-pr-title', {
+    text: 'Precision–Recall',
+    fontSize: 13,
+    fontWeight: 600,
+  });
+
+  useLatestPythonEmitter(pythonEmitterRef, () =>
+    emitRocPrPython({
+      title: titleStyle.text,
+      caption: captionStyle.text,
+      rocPanelTitle: rocPanelTitleStyle.text,
+      prPanelTitle: prPanelTitleStyle.text,
+      showCi,
+      palette,
+      models,
+      bootstrapIter,
+      n,
+    }),
+  );
 
   const textRefs = useMemo(
     () => [

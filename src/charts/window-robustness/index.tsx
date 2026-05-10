@@ -17,6 +17,11 @@ import { registerChart } from '../../registry';
 import { mulberry32, randn } from '../../lib/random';
 import { EditableSvgText } from '../../components/EditableSvgText';
 import { useEvalChartConfig } from '../../lib/useEvalChartConfig';
+import {
+  useLatestPythonEmitter,
+  type PythonEmitter,
+} from '../../lib/pythonExport';
+import { emitWindowRobustnessPython } from './python';
 import type { TextOverrideMap } from '../../lib/useTextOverrides';
 
 /**
@@ -154,6 +159,7 @@ function WindowRobustness() {
     setColormap(cfg.colormap);
     setShowOursBand(cfg.showOursBand);
   }, []);
+  const pythonEmitterRef = useRef<PythonEmitter | null>(null);
   const { textOverrides, renderInspectorSections } = useEvalChartConfig<
     SavedConfig
   >({
@@ -161,6 +167,8 @@ function WindowRobustness() {
     buildBaseConfig,
     applyBaseConfig,
     filename: 'window-robustness-config.json',
+    pythonEmitterRef,
+    pythonFilename: 'window-robustness.py',
   });
 
   const series = useMemo(
@@ -394,6 +402,23 @@ function WindowRobustness() {
       'Synthetic curves seeded from §3 Table 4; left: event sensitivity, right: detection latency.',
     fontSize: 12,
   });
+
+  useLatestPythonEmitter(pythonEmitterRef, () =>
+    emitWindowRobustnessPython({
+      title: titleStyle.text,
+      caption: captionStyle.text,
+      windows: WINDOWS_S,
+      series: series.map((s, i) => ({
+        name: s.spec.name,
+        sensitivity: s.sensitivity,
+        latency: s.latency,
+        color: palette[i] ?? '#444',
+        highlight: Boolean(s.spec.highlight),
+      })),
+      showMarkers,
+      showOursBand,
+    }),
+  );
   const panelATitleId = 'panel-a-title';
   const panelBTitleId = 'panel-b-title';
   const panelAStyle = textOverrides.resolve(panelATitleId, {

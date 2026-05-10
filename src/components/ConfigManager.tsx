@@ -21,6 +21,13 @@ export interface ConfigManagerProps<T> {
    * is replaced wholesale).
    */
   onReset?: () => void;
+  /**
+   * Optional "export Python source" handler. When provided, the panel
+   * renders a third action button alongside JSON export / import that
+   * triggers a `.py` download containing a self-contained matplotlib
+   * script reproducing the current figure.
+   */
+  onExportPython?: () => void;
 }
 
 export function ConfigManager<T>({
@@ -31,6 +38,7 @@ export function ConfigManager<T>({
   saveConfigToSlot,
   deleteConfigSlot,
   onReset,
+  onExportPython,
 }: ConfigManagerProps<T>) {
   const [slotName, setSlotName] = useState('');
   const [importError, setImportError] = useState<string | null>(null);
@@ -134,6 +142,15 @@ export function ConfigManager<T>({
       </div>
       {importError && (
         <p className="text-[11px] text-red-400">{importError}</p>
+      )}
+      {onExportPython && (
+        <button
+          type="button"
+          onClick={onExportPython}
+          className="w-full rounded border border-emerald-500/60 bg-emerald-500/15 px-2 py-1 text-[11px] text-emerald-200 hover:bg-emerald-500/25"
+        >
+          导出 Python 源码
+        </button>
       )}
       {onReset && (
         <button

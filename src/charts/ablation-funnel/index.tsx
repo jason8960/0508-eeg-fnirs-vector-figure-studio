@@ -12,7 +12,12 @@ import { InspirationPanel } from '../../components/InspirationPanel';
 import { registerChart } from '../../registry';
 import { EditableSvgText } from '../../components/EditableSvgText';
 import { useEvalChartConfig } from '../../lib/useEvalChartConfig';
+import {
+  useLatestPythonEmitter,
+  type PythonEmitter,
+} from '../../lib/pythonExport';
 import type { TextOverrideMap } from '../../lib/useTextOverrides';
+import { emitAblationFunnelPython } from './python';
 
 interface AblationStep {
   label: string;
@@ -66,6 +71,7 @@ function AblationFunnel() {
     setStepHeight(cfg.stepHeight);
     setFillOpacity(cfg.fillOpacity);
   }, []);
+  const pythonEmitterRef = useRef<PythonEmitter | null>(null);
   const { textOverrides, renderInspectorSections } = useEvalChartConfig<
     SavedConfig
   >({
@@ -73,6 +79,8 @@ function AblationFunnel() {
     buildBaseConfig,
     applyBaseConfig,
     filename: 'ablation-funnel-config.json',
+    pythonEmitterRef,
+    pythonFilename: 'ablation-funnel.py',
   });
 
   const expertSchema: ExpertSchema = [
@@ -122,6 +130,17 @@ function AblationFunnel() {
     text: 'Synthetic ablation study; accuracies are illustrative.',
     fontSize: 12,
   });
+
+  useLatestPythonEmitter(pythonEmitterRef, () =>
+    emitAblationFunnelPython({
+      title: titleStyle.text,
+      caption: captionStyle.text,
+      stepLabels: steps.map((s) => s.label),
+      stepAccuracies: steps.map((s) => s.accuracy),
+      palette,
+      fillOpacity,
+    }),
+  );
   const textRefs = useMemo(() => {
     const refs: Array<{
       id: string;

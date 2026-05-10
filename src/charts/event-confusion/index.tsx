@@ -18,6 +18,11 @@ import {
 import { registerChart } from '../../registry';
 import { EditableSvgText } from '../../components/EditableSvgText';
 import { useEvalChartConfig } from '../../lib/useEvalChartConfig';
+import {
+  useLatestPythonEmitter,
+  type PythonEmitter,
+} from '../../lib/pythonExport';
+import { emitEventConfusionPython } from './python';
 import type { TextOverrideMap } from '../../lib/useTextOverrides';
 
 // Default models matching the screenshot
@@ -116,6 +121,7 @@ function EventConfusionChart() {
     setHighlightModel(cfg.highlightModel);
     setShowMetrics(cfg.showMetrics);
   }, []);
+  const pythonEmitterRef = useRef<PythonEmitter | null>(null);
   const { textOverrides, renderInspectorSections } = useEvalChartConfig<
     SavedConfig
   >({
@@ -123,6 +129,8 @@ function EventConfusionChart() {
     buildBaseConfig,
     applyBaseConfig,
     filename: 'event-confusion-config.json',
+    pythonEmitterRef,
+    pythonFilename: 'event-confusion.py',
   });
 
   const expertSchema: ExpertSchema = [
@@ -264,6 +272,24 @@ function EventConfusionChart() {
     text: `合成数据 (n=${n}, seed=${seed}) · ${normalize ? '归一化概率' : '原始计数'}`,
     fontSize: 12,
   });
+
+  useLatestPythonEmitter(pythonEmitterRef, () =>
+    emitEventConfusionPython({
+      title: titleStyle.text,
+      caption: captionStyle.text,
+      models: matrices.map(({ model, data }) => ({
+        name: model.name,
+        tn: data.tn,
+        fp: data.fp,
+        fn: data.fn,
+        tp: data.tp,
+      })),
+      normalize,
+      showMetrics,
+      colormapName: colormap,
+      highlightModel,
+    }),
+  );
   const textRefs = useMemo(() => {
     const refs: Array<{
       id: string;

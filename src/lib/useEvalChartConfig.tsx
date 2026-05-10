@@ -20,10 +20,18 @@
  * change is enforced by the underlying `useAutoSave` (it diffs the
  * stringified snapshot against the latest persisted slot).
  */
-import { useCallback, useMemo, useRef, useState, type ReactNode } from 'react';
+import {
+  useCallback,
+  useMemo,
+  useRef,
+  useState,
+  type MutableRefObject,
+  type ReactNode,
+} from 'react';
 import { ConfigManager } from '../components/ConfigManager';
 import { ControlGroup } from '../components/Controls';
 import { TextOverridePanel } from '../components/TextOverridePanel';
+import { downloadPythonFile, type PythonEmitter } from './pythonExport';
 import { useChartConfig } from './useChartConfig';
 import {
   useTextOverrides,
@@ -45,6 +53,24 @@ export interface UseEvalChartConfigOptions<TBase> {
   applyBaseConfig: (cfg: TBase) => void;
   /** Stable filename used for the JSON download / import. */
   filename: string;
+  /**
+   * Opt-in Python emitter slot. Pass a ref initialised inside the
+   * chart component (`useRef<PythonEmitter | null>(null)`) and assign
+   * the latest closure to `.current` AFTER all required data /
+   * `textOverrides.resolve()` calls have run. The shared
+   * `<ConfigManager>` panel only renders the "导出 Python" button
+   * when this ref is supplied; clicking the button reads
+   * `ref.current()` lazily so the emitter always sees the freshest
+   * snapshot. We use a ref instead of a plain callback to side-step
+   * the temporal-dead-zone problem of needing to reference variables
+   * declared later in the chart's render body.
+   */
+  pythonEmitterRef?: MutableRefObject<PythonEmitter | null>;
+  /**
+   * Filename used for the Python download (defaults to
+   * `<storageKey-without-suffix>.py`).
+   */
+  pythonFilename?: string;
 }
 
 export interface EvalChartTextRef {
@@ -69,7 +95,16 @@ export interface UseEvalChartConfigResult {
 export function useEvalChartConfig<TBase extends EvalConfigBase>(
   options: UseEvalChartConfigOptions<TBase>,
 ): UseEvalChartConfigResult {
-  const { storageKey, buildBaseConfig, applyBaseConfig, filename } = options;
+  const {
+    storageKey,
+    buildBaseConfig,
+    applyBaseConfig,
+    filename,
+    pythonEmitterRef,
+    pythonFilename,
+  } = options;
+  const resolvedPythonFilename =
+    pythonFilename ?? `${storageKey.replace(/-configs-v1$/, '')}.py`;
 
   const [overrides, setOverridesState] = useState<TextOverrideMap>({});
   const setOverridesMap = useCallback((m: TextOverrideMap) => {
@@ -114,6 +149,15 @@ export function useEvalChartConfig<TBase extends EvalConfigBase>(
     applyBaseConfig(defaults);
     setOverridesState({});
   }, [applyBaseConfig]);
+
+  const handleExportPython = useMemo(() => {
+    if (!pythonEmitterRef) return undefined;
+    return () => {
+      const fn = pythonEmitterRef.current;
+      if (!fn) return;
+      downloadPythonFile(resolvedPythonFilename, fn());
+    };
+  }, [pythonEmitterRef, resolvedPythonFilename]);
 
   const { configManagerProps } = useChartConfig<TBase>({
     storageKey,
@@ -160,12 +204,13 @@ export function useEvalChartConfig<TBase extends EvalConfigBase>(
               filename={filename}
               {...configManagerProps}
               onReset={handleReset}
+              onExportPython={handleExportPython}
             />
           </ControlGroup>
         </>
       );
     },
-    [overridesHook, configManagerProps, filename, handleReset],
+    [overridesHook, configManagerProps, filename, handleReset, handleExportPython],
   );
 
   return useMemo(

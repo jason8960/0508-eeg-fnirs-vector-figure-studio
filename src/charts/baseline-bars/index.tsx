@@ -16,7 +16,12 @@ import { registerChart } from '../../registry';
 import { mulberry32, randn } from '../../lib/random';
 import { EditableSvgText } from '../../components/EditableSvgText';
 import { useEvalChartConfig } from '../../lib/useEvalChartConfig';
+import {
+  useLatestPythonEmitter,
+  type PythonEmitter,
+} from '../../lib/pythonExport';
 import type { TextOverrideMap } from '../../lib/useTextOverrides';
+import { emitBaselineBarsPython } from './python';
 
 /**
  * Three-panel baseline comparison (CHB-MIT LOSO).
@@ -162,6 +167,7 @@ function BaselineBars() {
     setShowErrorBars(cfg.showErrorBars);
     setErrorMagnitude(cfg.errorMagnitude);
   }, []);
+  const pythonEmitterRef = useRef<PythonEmitter | null>(null);
   const { textOverrides, renderInspectorSections } = useEvalChartConfig<
     SavedConfig
   >({
@@ -169,6 +175,8 @@ function BaselineBars() {
     buildBaseConfig,
     applyBaseConfig,
     filename: 'baseline-bars-config.json',
+    pythonEmitterRef,
+    pythonFilename: 'baseline-bars.py',
   });
 
   const expertSchema: ExpertSchema = [
@@ -310,6 +318,29 @@ function BaselineBars() {
     text: 'Synthetic values aligned with §3 Table 3; Ours = GAT-CMC-Net.',
     fontSize: 12,
   });
+
+  useLatestPythonEmitter(pythonEmitterRef, () =>
+    emitBaselineBarsPython({
+      title: titleStyle.text,
+      caption: captionStyle.text,
+      baselineNames: BASELINES.map((b) => b.name),
+      highlightFlags: BASELINES.map((b) => Boolean(b.highlight)),
+      seValues: data.se,
+      faValues: data.fa,
+      latValues: data.lat,
+      panelTitles: PANELS.map((p) => p.title),
+      panelYLabels: PANELS.map((p) => p.yLabel),
+      panelPalettes: PANELS.map((p) =>
+        sampleColormap(
+          colormap === 'panel-default' ? p.colormap : (colormap as ColormapName),
+          BASELINES.length + 2,
+        ).slice(1, BASELINES.length + 1),
+      ),
+      showValues,
+      showErrorBars,
+      errorMagnitude,
+    }),
+  );
 
   const textRefs = useMemo(() => {
     const refs: Array<{
