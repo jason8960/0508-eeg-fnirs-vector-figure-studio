@@ -33,6 +33,11 @@ import { registerChart } from '../../registry';
 import { buildLinearAxis } from '../../lib/scales';
 import { useEvalChartConfig } from '../../lib/useEvalChartConfig';
 import type { TextOverrideMap } from '../../lib/useTextOverrides';
+import {
+  useLatestPythonEmitter,
+  type PythonEmitter,
+} from '../../lib/pythonExport';
+import { emitHrfKernelPython } from './python';
 
 /* ----------------------------- types ---------------------------------- */
 
@@ -165,13 +170,36 @@ function HrfKernelChart() {
     if (!c || c.version !== 1) return;
     setCfg(c);
   }, []);
+  const pythonEmitterRef = useRef<PythonEmitter | null>(null);
   const { renderInspectorSections } = useEvalChartConfig<SavedConfig>({
     storageKey: STORAGE_KEY,
     buildBaseConfig,
     applyBaseConfig,
     filename: 'hrf-kernel-config.json',
+    pythonEmitterRef,
+    pythonFilename: 'hrf-kernel.py',
   });
   const textRefs = useMemo(() => [], []);
+
+  useLatestPythonEmitter(pythonEmitterRef, () =>
+    emitHrfKernelPython({
+      title: cfg.title,
+      subtitleA: cfg.subtitleA,
+      subtitleB: cfg.subtitleB,
+      axisAX: cfg.axisAX,
+      axisAY: cfg.axisAY,
+      axisBX: cfg.axisBX,
+      axisBY: cfg.axisBY,
+      sigma: cfg.sigma,
+      tauMin: cfg.tauMin,
+      tauMax: cfg.tauMax,
+      curves: cfg.curves,
+      showLegend: cfg.showLegend,
+      showGrid: cfg.showGrid,
+      showInfoBox: cfg.showInfoBox,
+      infoBoxText: cfg.infoBoxText,
+    }),
+  );
 
   /* ----------------------- math ------------------------ */
   const gauss = (delta: number, tau: number, sigma: number) =>

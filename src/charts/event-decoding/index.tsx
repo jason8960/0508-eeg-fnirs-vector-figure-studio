@@ -31,6 +31,11 @@ import { registerChart } from '../../registry';
 import { buildLinearAxis } from '../../lib/scales';
 import { useEvalChartConfig } from '../../lib/useEvalChartConfig';
 import type { TextOverrideMap } from '../../lib/useTextOverrides';
+import {
+  useLatestPythonEmitter,
+  type PythonEmitter,
+} from '../../lib/pythonExport';
+import { emitEventDecodingPython } from './python';
 
 /* ----------------------------- types ---------------------------------- */
 
@@ -222,11 +227,14 @@ function EventDecodingChart() {
     if (!c || c.version !== 1) return;
     setCfg(c);
   }, []);
+  const pythonEmitterRef = useRef<PythonEmitter | null>(null);
   const { renderInspectorSections } = useEvalChartConfig<SavedConfig>({
     storageKey: STORAGE_KEY,
     buildBaseConfig,
     applyBaseConfig,
     filename: 'event-decoding-config.json',
+    pythonEmitterRef,
+    pythonFilename: 'event-decoding.py',
   });
   const textRefs = useMemo(() => [], []);
 
@@ -269,6 +277,30 @@ function EventDecodingChart() {
   const finalWindows = useMemo(
     () => maskToWindows(closedMask, times),
     [closedMask, times],
+  );
+
+  useLatestPythonEmitter(pythonEmitterRef, () =>
+    emitEventDecodingPython({
+      title: cfg.title,
+      subtitleA: cfg.subtitleA,
+      subtitleB: cfg.subtitleB,
+      subtitleC: cfg.subtitleC,
+      axisX: cfg.axisX,
+      axisYa: cfg.axisYa,
+      axisYb: cfg.axisYb,
+      axisYc: cfg.axisYc,
+      tMin: cfg.tMin,
+      tMax: cfg.tMax,
+      theta: cfg.theta,
+      showThresholdLine: cfg.showThresholdLine,
+      showGrid: cfg.showGrid,
+      times,
+      posterior,
+      closedMask: Array.from(closedMask),
+      finalWindows,
+      noteText: cfg.noteText,
+      showNote: cfg.showNote,
+    }),
   );
 
   /* ----------------------- axes ------------------------ */
