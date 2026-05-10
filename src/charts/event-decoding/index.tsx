@@ -26,11 +26,17 @@ import {
 } from '../../components/Controls';
 import type { ExpertSchema } from '../../components/ExpertPanel';
 import { InspirationPanel } from '../../components/InspirationPanel';
-import { renderInlineLatex } from '../../lib/latex';
 import { registerChart } from '../../registry';
 import { buildLinearAxis } from '../../lib/scales';
 import { useEvalChartConfig } from '../../lib/useEvalChartConfig';
 import type { TextOverrideMap } from '../../lib/useTextOverrides';
+import { type FormatStore, type TextFormatDefaults } from '../../lib/textFormat';
+import { useTextFormat } from '../../lib/useTextFormat';
+import { TextFormatPopover } from '../../components/TextFormatPopover';
+import {
+  EditableForeignText as ForeignText,
+  type SelectedTextAnchor,
+} from '../../components/EditableForeignText';
 
 /* ----------------------------- types ---------------------------------- */
 
@@ -76,6 +82,7 @@ interface SavedConfig {
   subtitleSize: number;
   axisLabelSize: number;
   noteSize: number;
+  formats?: FormatStore;
   textOverrides?: TextOverrideMap;
 }
 
@@ -114,11 +121,13 @@ const DEFAULT_CONFIG: SavedConfig = {
   subtitleSize: 13,
   axisLabelSize: 12,
   noteSize: 11,
+  formats: {},
 };
 
 /* ----------------------------- persistence ---------------------------- */
 
 const STORAGE_KEY = 'event-decoding-configs-v1';
+
 
 /* ----------------------------- canvas ---------------------------- */
 
@@ -202,6 +211,15 @@ function EventDecodingChart() {
   const svgRef = useRef<SVGSVGElement>(null);
   const [cfg, setCfg] = useState<SavedConfig>(() => DEFAULT_CONFIG);
 
+  const {
+    selected,
+    handleSelectText,
+    handleClearSelection,
+    patchFormat: handlePatchFormat,
+    resetElementFormat: handleResetElementFormat,
+    resetAllFormats: handleResetAllFormats,
+  } = useTextFormat<SavedConfig>(setCfg);
+
   const patch = useCallback((p: Partial<SavedConfig>) => {
     setCfg((prev) => ({ ...prev, ...p }));
   }, []);
@@ -217,6 +235,7 @@ function EventDecodingChart() {
     [],
   );
 
+  /* ----------------------- config persistence ------------------------ */
   const buildBaseConfig = useCallback((): SavedConfig => cfg, [cfg]);
   const applyBaseConfig = useCallback((c: SavedConfig) => {
     if (!c || c.version !== 1) return;
@@ -423,6 +442,19 @@ function EventDecodingChart() {
               rows={2}
             />
           </ControlGroup>
+          <ControlGroup label="文字格式">
+            <button
+              type="button"
+              onClick={handleResetAllFormats}
+              className="w-full rounded border border-ink-600 px-2 py-1 text-[11px] text-ink-100 hover:bg-ink-800"
+            >
+              重置全部文本格式
+            </button>
+            <p className="text-[10px] leading-snug text-ink-300">
+              逐字段格式覆盖（字号 / 字重 / 斜体 / 行高 / 对齐 / 颜色）。
+              点击 SVG 中任一文字打开浮动工具栏。
+            </p>
+          </ControlGroup>
           {renderInspectorSections(textRefs)}
         </>
       }
@@ -489,6 +521,11 @@ function EventDecodingChart() {
             fontSize={cfg.titleSize}
             fontWeight={700}
             align="center"
+            kid="title"
+            label="主标题"
+            format={cfg.formats?.['title']}
+            selected={selected?.key === 'title'}
+            onSelect={handleSelectText}
           />
 
           {/* Subtitles */}
@@ -501,6 +538,11 @@ function EventDecodingChart() {
             fontSize={cfg.subtitleSize}
             fontWeight={500}
             align="left"
+            kid="subtitleA"
+            label="小标题 (a)"
+            format={cfg.formats?.['subtitleA']}
+            selected={selected?.key === 'subtitleA'}
+            onSelect={handleSelectText}
           />
           <ForeignText
             x={PANEL_W.x0}
@@ -511,6 +553,11 @@ function EventDecodingChart() {
             fontSize={cfg.subtitleSize}
             fontWeight={500}
             align="left"
+            kid="subtitleB"
+            label="小标题 (b)"
+            format={cfg.formats?.['subtitleB']}
+            selected={selected?.key === 'subtitleB'}
+            onSelect={handleSelectText}
           />
           <ForeignText
             x={PANEL_W.x0}
@@ -521,10 +568,28 @@ function EventDecodingChart() {
             fontSize={cfg.subtitleSize}
             fontWeight={500}
             align="left"
+            kid="subtitleC"
+            label="小标题 (c)"
+            format={cfg.formats?.['subtitleC']}
+            selected={selected?.key === 'subtitleC'}
+            onSelect={handleSelectText}
           />
 
           {/* Panel (a) — posterior */}
-          <PanelChrome ax={axA} xLabel={cfg.axisX} yLabel={cfg.axisYa} showGrid={cfg.showGrid} axisLabelSize={cfg.axisLabelSize} />
+          <PanelChrome
+            ax={axA}
+            xLabel={cfg.axisX}
+            yLabel={cfg.axisYa}
+            showGrid={cfg.showGrid}
+            axisLabelSize={cfg.axisLabelSize}
+            xLabelKid="panelA-x"
+            yLabelKid="panelA-y"
+            xLabelLabel="X 轴 (a)"
+            yLabelLabel="Y 轴 (a)"
+            formats={cfg.formats}
+            selectedKey={selected?.key}
+            onSelectText={handleSelectText}
+          />
           {/* Ground-truth shaded bands (cfg.segs are the seed bumps = GT) */}
           {cfg.segs.map((s, i) => {
             const halfW = s.width * 1.0;
@@ -596,17 +661,76 @@ function EventDecodingChart() {
                 fontSize={11}
                 align="right"
                 color="#D62728"
+                kid="threshold-label"
+                label="阈值标注"
+                format={cfg.formats?.['threshold-label']}
+                selected={selected?.key === 'threshold-label'}
+                onSelect={handleSelectText}
               />
             </g>
           ) : null}
 
           {/* Panel (b) — closed mask vs raw mask */}
-          <PanelChrome ax={axB} xLabel={cfg.axisX} yLabel={cfg.axisYb} showGrid={cfg.showGrid} axisLabelSize={cfg.axisLabelSize} />
-          <BinaryStrip mask={rawMask} times={times} ax={axB} color="#cccccc" yShift={0} height={28} label="raw" labelOffset={-22} />
-          <BinaryStrip mask={closedMask} times={times} ax={axB} color="#2CA02C" yShift={36} height={28} label={`closing (${cfg.Wmin.toFixed(1)} s)`} labelOffset={-22} />
+          <PanelChrome
+            ax={axB}
+            xLabel={cfg.axisX}
+            yLabel={cfg.axisYb}
+            showGrid={cfg.showGrid}
+            axisLabelSize={cfg.axisLabelSize}
+            xLabelKid="panelB-x"
+            yLabelKid="panelB-y"
+            xLabelLabel="X 轴 (b)"
+            yLabelLabel="Y 轴 (b)"
+            formats={cfg.formats}
+            selectedKey={selected?.key}
+            onSelectText={handleSelectText}
+          />
+          <BinaryStrip
+            mask={rawMask}
+            times={times}
+            ax={axB}
+            color="#cccccc"
+            yShift={0}
+            height={28}
+            label="raw"
+            labelOffset={-22}
+            labelKid="strip-raw"
+            labelLabel="raw 标签"
+            formats={cfg.formats}
+            selectedKey={selected?.key}
+            onSelectText={handleSelectText}
+          />
+          <BinaryStrip
+            mask={closedMask}
+            times={times}
+            ax={axB}
+            color="#2CA02C"
+            yShift={36}
+            height={28}
+            label={`closing (${cfg.Wmin.toFixed(1)} s)`}
+            labelOffset={-22}
+            labelKid="strip-closing"
+            labelLabel="closing 标签"
+            formats={cfg.formats}
+            selectedKey={selected?.key}
+            onSelectText={handleSelectText}
+          />
 
           {/* Panel (c) — windows with TP / FP / FN colouring */}
-          <PanelChrome ax={axC} xLabel={cfg.axisX} yLabel={cfg.axisYc} showGrid={cfg.showGrid} axisLabelSize={cfg.axisLabelSize} />
+          <PanelChrome
+            ax={axC}
+            xLabel={cfg.axisX}
+            yLabel={cfg.axisYc}
+            showGrid={cfg.showGrid}
+            axisLabelSize={cfg.axisLabelSize}
+            xLabelKid="panelC-x"
+            yLabelKid="panelC-y"
+            xLabelLabel="X 轴 (c)"
+            yLabelLabel="Y 轴 (c)"
+            formats={cfg.formats}
+            selectedKey={selected?.key}
+            onSelectText={handleSelectText}
+          />
           {/* Compute TP / FP / FN against GT */}
           {(() => {
             const gt = cfg.segs.map((s) => ({
@@ -646,6 +770,11 @@ function EventDecodingChart() {
                   fontSize={10}
                   align="right"
                   color="#666"
+                  kid="gt-strip-label"
+                  label="GT 标签"
+                  format={cfg.formats?.['gt-strip-label']}
+                  selected={selected?.key === 'gt-strip-label'}
+                  onSelect={handleSelectText}
                 />
                 {/* Detected windows: TP green, FP red */}
                 {finalWindows.map((w, i) => (
@@ -675,7 +804,21 @@ function EventDecodingChart() {
                 {/* Metrics badge top-right */}
                 <g transform={`translate(${PANEL_W.x1 - 320}, ${PANEL_C.yTop - 28})`}>
                   <rect x={0} y={-6} width={310} height={26} rx={6} fill="#FAFAFA" stroke="#CCC" />
-                  <ForeignText x={6} y={-4} width={300} height={20} value={`TP=${TP} · FP=${FP} · FN=${FN}`} fontSize={11} fontWeight={600} align="left" />
+                  <ForeignText
+                    x={6}
+                    y={-4}
+                    width={300}
+                    height={20}
+                    value={`TP=${TP} · FP=${FP} · FN=${FN}`}
+                    fontSize={11}
+                    fontWeight={600}
+                    align="left"
+                    kid="metrics-badge"
+                    label="TP/FP/FN 徽章"
+                    format={cfg.formats?.['metrics-badge']}
+                    selected={selected?.key === 'metrics-badge'}
+                    onSelect={handleSelectText}
+                  />
                 </g>
                 {/* Metrics bars below the windows */}
                 <g transform={`translate(${PANEL_W.x0}, ${PANEL_C.yBot + 12})`}>
@@ -683,14 +826,45 @@ function EventDecodingChart() {
                     ['Precision', precision, '#2CA02C'],
                     ['Recall', recall, '#1F77B4'],
                     ['F1', f1, '#9467BD'],
-                  ] as const).map(([name, v, c], k) => (
-                    <g key={k} transform={`translate(${k * 220}, 0)`}>
-                      <ForeignText x={0} y={-2} width={70} height={14} value={String(name)} fontSize={11} fontWeight={600} align="left" />
-                      <rect x={70} y={4} width={120} height={6} fill="#E5E7EB" />
-                      <rect x={70} y={4} width={(v as number) * 120} height={6} fill={c as string} />
-                      <ForeignText x={196} y={-2} width={28} height={14} value={(v as number).toFixed(2)} fontSize={10} align="left" />
-                    </g>
-                  ))}
+                  ] as const).map(([name, v, c], k) => {
+                    const nameKid = `metric-name-${name}`;
+                    const valKid = `metric-value-${name}`;
+                    return (
+                      <g key={k} transform={`translate(${k * 220}, 0)`}>
+                        <ForeignText
+                          x={0}
+                          y={-2}
+                          width={70}
+                          height={14}
+                          value={String(name)}
+                          fontSize={11}
+                          fontWeight={600}
+                          align="left"
+                          kid={nameKid}
+                          label={`${name} 名称`}
+                          format={cfg.formats?.[nameKid]}
+                          selected={selected?.key === nameKid}
+                          onSelect={handleSelectText}
+                        />
+                        <rect x={70} y={4} width={120} height={6} fill="#E5E7EB" />
+                        <rect x={70} y={4} width={(v as number) * 120} height={6} fill={c as string} />
+                        <ForeignText
+                          x={196}
+                          y={-2}
+                          width={28}
+                          height={14}
+                          value={(v as number).toFixed(2)}
+                          fontSize={10}
+                          align="left"
+                          kid={valKid}
+                          label={`${name} 数值`}
+                          format={cfg.formats?.[valKid]}
+                          selected={selected?.key === valKid}
+                          onSelect={handleSelectText}
+                        />
+                      </g>
+                    );
+                  })}
                 </g>
               </g>
             );
@@ -720,8 +894,60 @@ function EventDecodingChart() {
                 value={cfg.noteText}
                 fontSize={cfg.noteSize}
                 align={cfg.noteAlign}
+                kid="note"
+                label="注释"
+                format={cfg.formats?.['note']}
+                selected={selected?.key === 'note'}
+                onSelect={handleSelectText}
               />
             </g>
+          ) : null}
+
+          {selected ? (
+            <rect
+              x={0}
+              y={0}
+              width={W_FIG}
+              height={H_FIG}
+              fill="transparent"
+              pointerEvents="all"
+              onMouseDown={handleClearSelection}
+              data-export="false"
+              style={{ cursor: 'default' }}
+            />
+          ) : null}
+          {selected ? (
+            (() => {
+              const popoverWidth = 280;
+              const popoverHeight = 130;
+              const margin = 6;
+              const ax = Math.max(
+                4,
+                Math.min(
+                  W_FIG - popoverWidth - 4,
+                  selected.x + selected.w / 2 - popoverWidth / 2,
+                ),
+              );
+              const ay =
+                selected.y + selected.h + margin + popoverHeight > H_FIG
+                  ? Math.max(4, selected.y - popoverHeight - margin)
+                  : selected.y + selected.h + margin;
+              const popoverDefaults: TextFormatDefaults = selected.defaults;
+              return (
+                <TextFormatPopover
+                  anchorX={ax}
+                  anchorY={ay}
+                  width={popoverWidth}
+                  height={popoverHeight}
+                  override={cfg.formats?.[selected.key]}
+                  defaults={popoverDefaults}
+                  label={selected.label}
+                  onChange={(p) => handlePatchFormat(selected.key, p)}
+                  onReset={() => handleResetElementFormat(selected.key)}
+                  onClose={handleClearSelection}
+                />
+              );
+            })()
           ) : null}
         </FigureFrame>
       }
@@ -782,12 +1008,26 @@ function PanelChrome({
   yLabel,
   showGrid,
   axisLabelSize,
+  xLabelKid,
+  yLabelKid,
+  xLabelLabel,
+  yLabelLabel,
+  formats,
+  selectedKey,
+  onSelectText,
 }: {
   ax: PanelAxes;
   xLabel: string;
   yLabel: string;
   showGrid: boolean;
   axisLabelSize: number;
+  xLabelKid?: string;
+  yLabelKid?: string;
+  xLabelLabel?: string;
+  yLabelLabel?: string;
+  formats?: FormatStore;
+  selectedKey?: string;
+  onSelectText?: (anchor: SelectedTextAnchor) => void;
 }) {
   return (
     <g>
@@ -814,9 +1054,35 @@ function PanelChrome({
           <text x={-9} y={4} textAnchor="end" fontSize={11} fill="#222" style={{ fontFamily: '"JetBrains Mono", monospace' }}>{t.label}</text>
         </g>
       ))}
-      <ForeignText x={ax.x0} y={ax.yBot + 26} width={ax.x1 - ax.x0} height={26} value={xLabel} fontSize={axisLabelSize} align="center" />
+      <ForeignText
+        x={ax.x0}
+        y={ax.yBot + 26}
+        width={ax.x1 - ax.x0}
+        height={26}
+        value={xLabel}
+        fontSize={axisLabelSize}
+        align="center"
+        kid={xLabelKid}
+        label={xLabelLabel}
+        format={xLabelKid ? formats?.[xLabelKid] : undefined}
+        selected={!!xLabelKid && selectedKey === xLabelKid}
+        onSelect={onSelectText}
+      />
       <g transform={`translate(${ax.x0 - 50}, ${(ax.yTop + ax.yBot) / 2}) rotate(-90)`}>
-        <ForeignText x={-90} y={-14} width={180} height={24} value={yLabel} fontSize={axisLabelSize} align="center" />
+        <ForeignText
+          x={-90}
+          y={-14}
+          width={180}
+          height={24}
+          value={yLabel}
+          fontSize={axisLabelSize}
+          align="center"
+          kid={yLabelKid}
+          label={yLabelLabel}
+          format={yLabelKid ? formats?.[yLabelKid] : undefined}
+          selected={!!yLabelKid && selectedKey === yLabelKid}
+          onSelect={onSelectText}
+        />
       </g>
     </g>
   );
@@ -858,6 +1124,11 @@ function BinaryStrip({
   height,
   label,
   labelOffset,
+  labelKid,
+  labelLabel,
+  formats,
+  selectedKey,
+  onSelectText,
 }: {
   mask: Uint8Array;
   times: number[];
@@ -867,6 +1138,11 @@ function BinaryStrip({
   height: number;
   label: string;
   labelOffset: number;
+  labelKid?: string;
+  labelLabel?: string;
+  formats?: FormatStore;
+  selectedKey?: string;
+  onSelectText?: (anchor: SelectedTextAnchor) => void;
 }) {
   const stripY = ax.yTop + 6 + yShift;
   const segs = useMemo(() => {
@@ -884,7 +1160,20 @@ function BinaryStrip({
   }, [mask, times]);
   return (
     <g>
-      <ForeignText x={ax.x0} y={stripY + labelOffset} width={120} height={18} value={label} fontSize={11} align="left" />
+      <ForeignText
+        x={ax.x0}
+        y={stripY + labelOffset}
+        width={120}
+        height={18}
+        value={label}
+        fontSize={11}
+        align="left"
+        kid={labelKid}
+        label={labelLabel}
+        format={labelKid ? formats?.[labelKid] : undefined}
+        selected={!!labelKid && selectedKey === labelKid}
+        onSelect={onSelectText}
+      />
       {segs.map((s, i) => (
         <rect
           key={i}
@@ -898,66 +1187,6 @@ function BinaryStrip({
         />
       ))}
     </g>
-  );
-}
-
-function ForeignText({
-  x,
-  y,
-  width,
-  height,
-  value,
-  fontSize,
-  fontWeight,
-  align = 'left',
-  color,
-}: {
-  x: number;
-  y: number;
-  width: number;
-  height: number;
-  value: string;
-  fontSize: number;
-  fontWeight?: number;
-  align?: Align;
-  color?: string;
-}) {
-  const lines = value.split('\n');
-  const justify =
-    align === 'center'
-      ? 'center'
-      : align === 'right'
-      ? 'flex-end'
-      : 'flex-start';
-  return (
-    <foreignObject
-      x={x}
-      y={y}
-      width={width}
-      height={Math.max(height, lines.length * (fontSize + 4))}
-      data-latex={value}
-      data-latex-font-size={fontSize}
-      data-latex-font-weight={fontWeight ?? 400}
-    >
-      <div
-        style={{
-          display: 'flex',
-          flexDirection: 'column',
-          alignItems: justify,
-          textAlign: align as 'left' | 'center' | 'right',
-          fontFamily: 'Inter, "Noto Sans SC", system-ui, sans-serif',
-          fontSize,
-          fontWeight: fontWeight ?? 400,
-          color: color ?? '#1c1c1c',
-          lineHeight: 1.3,
-        }}
-        dangerouslySetInnerHTML={{
-          __html: lines
-            .map((l) => `<div>${l ? renderInlineLatex(l) : '&nbsp;'}</div>`)
-            .join(''),
-        }}
-      />
-    </foreignObject>
   );
 }
 

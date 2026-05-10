@@ -29,10 +29,13 @@ import {
 } from '../../components/Controls';
 import type { ExpertSchema } from '../../components/ExpertPanel';
 import { InspirationPanel } from '../../components/InspirationPanel';
-import { renderInlineLatex } from '../../lib/latex';
 import { registerChart } from '../../registry';
 import { useEvalChartConfig } from '../../lib/useEvalChartConfig';
 import type { TextOverrideMap } from '../../lib/useTextOverrides';
+import { type FormatStore, type TextFormatDefaults } from '../../lib/textFormat';
+import { useTextFormat } from '../../lib/useTextFormat';
+import { TextFormatPopover } from '../../components/TextFormatPopover';
+import { EditableForeignText as ForeignText } from '../../components/EditableForeignText';
 
 /* ----------------------------- types ---------------------------------- */
 
@@ -97,6 +100,7 @@ interface SavedConfig {
   moduleBodySize: number;
   arrowLabelSize: number;
   legendSize: number;
+  formats?: FormatStore;
   textOverrides?: TextOverrideMap;
 }
 
@@ -197,11 +201,13 @@ const DEFAULT_CONFIG: SavedConfig = {
   moduleBodySize: 11,
   arrowLabelSize: 11,
   legendSize: 12,
+  formats: {},
 };
 
 /* ----------------------------- persistence ---------------------------- */
 
 const STORAGE_KEY = 'gating-fusion-configs-v1';
+
 
 /* ----------------------------- canvas ---------------------------- */
 
@@ -242,6 +248,14 @@ function midOf(rect: Rect) {
 function GatingFusionChart() {
   const svgRef = useRef<SVGSVGElement>(null);
   const [cfg, setCfg] = useState<SavedConfig>(() => DEFAULT_CONFIG);
+  const {
+    selected,
+    handleSelectText,
+    handleClearSelection,
+    patchFormat: handlePatchFormat,
+    resetElementFormat: handleResetElementFormat,
+    resetAllFormats: handleResetAllFormats,
+  } = useTextFormat<SavedConfig>(setCfg);
 
   const patch = useCallback((p: Partial<SavedConfig>) => {
     setCfg((prev) => ({ ...prev, ...p }));
@@ -257,6 +271,7 @@ function GatingFusionChart() {
     [],
   );
 
+  /* ----------------------- config persistence ------------------------ */
   const buildBaseConfig = useCallback((): SavedConfig => cfg, [cfg]);
   const applyBaseConfig = useCallback((c: SavedConfig) => {
     if (!c || c.version !== 1) return;
@@ -406,6 +421,19 @@ function GatingFusionChart() {
               rows={2}
             />
           </ControlGroup>
+          <ControlGroup label="文字格式">
+            <button
+              type="button"
+              onClick={handleResetAllFormats}
+              className="w-full rounded border border-ink-600 px-2 py-1 text-[11px] text-ink-100 hover:bg-ink-800"
+            >
+              重置全部文本格式
+            </button>
+            <p className="text-[10px] leading-snug text-ink-300">
+              逐字段格式覆盖（字号 / 字重 / 斜体 / 行高 / 对齐 / 颜色）。
+              点击 SVG 中任一文字打开浮动工具栏。
+            </p>
+          </ControlGroup>
           {renderInspectorSections(textRefs)}
         </>
       }
@@ -471,6 +499,11 @@ function GatingFusionChart() {
             fontSize={cfg.titleSize}
             fontWeight={700}
             align="center"
+            kid="title"
+            label="主标题"
+            format={cfg.formats?.title}
+            selected={selected?.key === 'title'}
+            onSelect={handleSelectText}
           />
 
           {/* Arrow defs */}
@@ -526,6 +559,11 @@ function GatingFusionChart() {
                     value={g.label}
                     fontSize={cfg.arrowLabelSize}
                     align="center"
+                    kid={`arrow-${g.id}-label`}
+                    label={`边标签 ${g.id}`}
+                    format={cfg.formats?.[`arrow-${g.id}-label`]}
+                    selected={selected?.key === `arrow-${g.id}-label`}
+                    onSelect={handleSelectText}
                   />
                 </g>
               </g>
@@ -560,6 +598,11 @@ function GatingFusionChart() {
                   fontSize={cfg.moduleTitleSize}
                   fontWeight={600}
                   align="center"
+                  kid={`mod-${id}-title`}
+                  label={`${MODULE_LABELS[id]} 标题`}
+                  format={cfg.formats?.[`mod-${id}-title`]}
+                  selected={selected?.key === `mod-${id}-title`}
+                  onSelect={handleSelectText}
                 />
                 <ForeignText
                   x={m.x + 8}
@@ -569,6 +612,11 @@ function GatingFusionChart() {
                   value={m.body}
                   fontSize={cfg.moduleBodySize}
                   align="center"
+                  kid={`mod-${id}-body`}
+                  label={`${MODULE_LABELS[id]} 正文`}
+                  format={cfg.formats?.[`mod-${id}-body`]}
+                  selected={selected?.key === `mod-${id}-body`}
+                  onSelect={handleSelectText}
                 />
               </g>
             );
@@ -709,8 +757,60 @@ function GatingFusionChart() {
                 value={cfg.legendText}
                 fontSize={cfg.legendSize}
                 align={cfg.legendAlign}
+                kid="legend"
+                label="底部图例"
+                format={cfg.formats?.legend}
+                selected={selected?.key === 'legend'}
+                onSelect={handleSelectText}
               />
             </g>
+          ) : null}
+
+          {selected ? (
+            <rect
+              x={0}
+              y={0}
+              width={W_FIG}
+              height={H_FIG}
+              fill="transparent"
+              pointerEvents="all"
+              onMouseDown={handleClearSelection}
+              data-export="false"
+              style={{ cursor: 'default' }}
+            />
+          ) : null}
+          {selected ? (
+            (() => {
+              const popoverWidth = 280;
+              const popoverHeight = 130;
+              const margin = 6;
+              const ax = Math.max(
+                4,
+                Math.min(
+                  W_FIG - popoverWidth - 4,
+                  selected.x + selected.w / 2 - popoverWidth / 2,
+                ),
+              );
+              const ay =
+                selected.y + selected.h + margin + popoverHeight > H_FIG
+                  ? Math.max(4, selected.y - popoverHeight - margin)
+                  : selected.y + selected.h + margin;
+              const popoverDefaults: TextFormatDefaults = selected.defaults;
+              return (
+                <TextFormatPopover
+                  anchorX={ax}
+                  anchorY={ay}
+                  width={popoverWidth}
+                  height={popoverHeight}
+                  override={cfg.formats?.[selected.key]}
+                  defaults={popoverDefaults}
+                  label={selected.label}
+                  onChange={(p) => handlePatchFormat(selected.key, p)}
+                  onReset={() => handleResetElementFormat(selected.key)}
+                  onClose={handleClearSelection}
+                />
+              );
+            })()
           ) : null}
         </FigureFrame>
       }
@@ -735,66 +835,6 @@ const ALIGN_OPTIONS: ReadonlyArray<{ value: Align; label: string }> = [
   { value: 'center', label: '居中' },
   { value: 'right', label: '右对齐' },
 ];
-
-function ForeignText({
-  x,
-  y,
-  width,
-  height,
-  value,
-  fontSize,
-  fontWeight,
-  align = 'left',
-  color,
-}: {
-  x: number;
-  y: number;
-  width: number;
-  height: number;
-  value: string;
-  fontSize: number;
-  fontWeight?: number;
-  align?: Align;
-  color?: string;
-}) {
-  const lines = value.split('\n');
-  const justify =
-    align === 'center'
-      ? 'center'
-      : align === 'right'
-      ? 'flex-end'
-      : 'flex-start';
-  return (
-    <foreignObject
-      x={x}
-      y={y}
-      width={width}
-      height={Math.max(height, lines.length * (fontSize + 4))}
-      data-latex={value}
-      data-latex-font-size={fontSize}
-      data-latex-font-weight={fontWeight ?? 400}
-    >
-      <div
-        style={{
-          display: 'flex',
-          flexDirection: 'column',
-          alignItems: justify,
-          textAlign: align as 'left' | 'center' | 'right',
-          fontFamily: 'Inter, "Noto Sans SC", system-ui, sans-serif',
-          fontSize,
-          fontWeight: fontWeight ?? 400,
-          color: color ?? '#1c1c1c',
-          lineHeight: 1.3,
-        }}
-        dangerouslySetInnerHTML={{
-          __html: lines
-            .map((l) => `<div>${l ? renderInlineLatex(l) : '&nbsp;'}</div>`)
-            .join(''),
-        }}
-      />
-    </foreignObject>
-  );
-}
 
 /** Linear interpolation between two hex colours. */
 function mixHex(a: string, b: string, t: number): string {

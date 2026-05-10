@@ -26,11 +26,17 @@ import {
 } from '../../components/Controls';
 import type { ExpertSchema } from '../../components/ExpertPanel';
 import { InspirationPanel } from '../../components/InspirationPanel';
-import { renderInlineLatex } from '../../lib/latex';
 import { registerChart } from '../../registry';
 import { buildLinearAxis } from '../../lib/scales';
 import { useEvalChartConfig } from '../../lib/useEvalChartConfig';
 import type { TextOverrideMap } from '../../lib/useTextOverrides';
+import { type FormatStore, type TextFormatDefaults } from '../../lib/textFormat';
+import { useTextFormat } from '../../lib/useTextFormat';
+import { TextFormatPopover } from '../../components/TextFormatPopover';
+import {
+  EditableForeignText as ForeignText,
+  type SelectedTextAnchor,
+} from '../../components/EditableForeignText';
 
 /* ----------------------------- types ---------------------------------- */
 
@@ -88,6 +94,7 @@ interface SavedConfig {
   axisLabelSize: number;
   legendSize: number;
   noteSize: number;
+  formats?: FormatStore;
   textOverrides?: TextOverrideMap;
 }
 
@@ -128,11 +135,13 @@ const DEFAULT_CONFIG: SavedConfig = {
   axisLabelSize: 12,
   legendSize: 11,
   noteSize: 11,
+  formats: {},
 };
 
 /* ----------------------------- persistence ---------------------------- */
 
 const STORAGE_KEY = 'hrf-alignment-configs-v1';
+
 
 /* ----------------------------- canvas ---------------------------- */
 
@@ -220,6 +229,14 @@ function HrfAlignmentChart() {
   const svgRef = useRef<SVGSVGElement>(null);
 
   const [cfg, setCfg] = useState<SavedConfig>(() => DEFAULT_CONFIG);
+  const {
+    selected,
+    handleSelectText,
+    handleClearSelection,
+    patchFormat: handlePatchFormat,
+    resetElementFormat: handleResetElementFormat,
+    resetAllFormats: handleResetAllFormats,
+  } = useTextFormat<SavedConfig>(setCfg);
 
   const patch = useCallback((p: Partial<SavedConfig>) => {
     setCfg((prev) => ({ ...prev, ...p }));
@@ -236,6 +253,7 @@ function HrfAlignmentChart() {
     [],
   );
 
+  /* ----------------------- config persistence ------------------------ */
   const buildBaseConfig = useCallback((): SavedConfig => cfg, [cfg]);
   const applyBaseConfig = useCallback((c: SavedConfig) => {
     if (!c || c.version !== 1) return;
@@ -474,6 +492,19 @@ function HrfAlignmentChart() {
               rows={2}
             />
           </ControlGroup>
+          <ControlGroup label="文字格式">
+            <button
+              type="button"
+              onClick={handleResetAllFormats}
+              className="w-full rounded border border-ink-600 px-2 py-1 text-[11px] text-ink-100 hover:bg-ink-800"
+            >
+              重置全部文本格式
+            </button>
+            <p className="text-[10px] leading-snug text-ink-300">
+              逐字段格式覆盖（字号 / 字重 / 斜体 / 行高 / 对齐 / 颜色）。
+              点击 SVG 中任一文字打开浮动工具栏。
+            </p>
+          </ControlGroup>
           {renderInspectorSections(textRefs)}
         </>
       }
@@ -550,6 +581,11 @@ function HrfAlignmentChart() {
             fontSize={cfg.titleSize}
             fontWeight={700}
             align="center"
+            kid="title"
+            label="主标题"
+            format={cfg.formats?.title}
+            selected={selected?.key === 'title'}
+            onSelect={handleSelectText}
           />
 
           {/* Subtitles */}
@@ -562,6 +598,11 @@ function HrfAlignmentChart() {
             fontSize={cfg.subtitleSize}
             fontWeight={500}
             align="left"
+            kid="subtitleA"
+            label="副标题 (a)"
+            format={cfg.formats?.subtitleA}
+            selected={selected?.key === 'subtitleA'}
+            onSelect={handleSelectText}
           />
           <ForeignText
             x={PANEL_W.x0}
@@ -572,6 +613,11 @@ function HrfAlignmentChart() {
             fontSize={cfg.subtitleSize}
             fontWeight={500}
             align="left"
+            kid="subtitleB"
+            label="副标题 (b)"
+            format={cfg.formats?.subtitleB}
+            selected={selected?.key === 'subtitleB'}
+            onSelect={handleSelectText}
           />
 
           {/* Panel (a) */}
@@ -581,6 +627,13 @@ function HrfAlignmentChart() {
             yLabel={cfg.axisY}
             showGrid={cfg.showGrid}
             axisLabelSize={cfg.axisLabelSize}
+            xLabelKid="axisX-A"
+            yLabelKid="axisY-A"
+            xLabelLabel="X 轴标签 (a)"
+            yLabelLabel="Y 轴标签 (a)"
+            formats={cfg.formats}
+            selectedKey={selected?.key}
+            onSelectText={handleSelectText}
           />
           {cfg.showHighlight ? (
             <rect
@@ -613,6 +666,11 @@ function HrfAlignmentChart() {
             value={`event $t_e$`}
             fontSize={10}
             align="center"
+            kid="eventLabel-A"
+            label="事件标记 (a)"
+            format={cfg.formats?.['eventLabel-A']}
+            selected={selected?.key === 'eventLabel-A'}
+            onSelect={handleSelectText}
           />
           {/* Channel τ shift markers (peakT + lag for each non-EEG signal) */}
           {cfg.signals.map((s, i) => {
@@ -654,6 +712,13 @@ function HrfAlignmentChart() {
             yLabel={cfg.axisY}
             showGrid={cfg.showGrid}
             axisLabelSize={cfg.axisLabelSize}
+            xLabelKid="axisX-B"
+            yLabelKid="axisY-B"
+            xLabelLabel="X 轴标签 (b)"
+            yLabelLabel="Y 轴标签 (b)"
+            formats={cfg.formats}
+            selectedKey={selected?.key}
+            onSelectText={handleSelectText}
           />
           {cfg.showHighlight ? (
             <rect
@@ -741,6 +806,11 @@ function HrfAlignmentChart() {
                   value={`$|\\rho|$ before $\\to$ after`}
                   fontSize={11}
                   align="left"
+                  kid="drhoTitle"
+                  label="Δρ 标题"
+                  format={cfg.formats?.drhoTitle}
+                  selected={selected?.key === 'drhoTitle'}
+                  onSelect={handleSelectText}
                 />
                 {items.map(({ s, i }, k) => {
                   const rb = Math.abs(pearson(eeg, tracesBefore[i]));
@@ -758,6 +828,11 @@ function HrfAlignmentChart() {
                         value={s.label.split(' ')[0]}
                         fontSize={10}
                         align="left"
+                        kid={`drho-label-${i}`}
+                        label={`Δρ 行标签 ${i}`}
+                        format={cfg.formats?.[`drho-label-${i}`]}
+                        selected={selected?.key === `drho-label-${i}`}
+                        onSelect={handleSelectText}
                       />
                       <rect x={labelW} y={4} width={barMax} height={3} fill="#E5E7EB" />
                       <rect x={labelW} y={4} width={wb} height={3} fill={s.color} fillOpacity={0.4} />
@@ -770,6 +845,11 @@ function HrfAlignmentChart() {
                         value={`$\\Delta=${(ra - rb >= 0 ? '+' : '') + (ra - rb).toFixed(2)}$`}
                         fontSize={10}
                         align="left"
+                        kid={`drho-delta-${i}`}
+                        label={`Δρ 增量 ${i}`}
+                        format={cfg.formats?.[`drho-delta-${i}`]}
+                        selected={selected?.key === `drho-delta-${i}`}
+                        onSelect={handleSelectText}
                       />
                     </g>
                   );
@@ -804,6 +884,11 @@ function HrfAlignmentChart() {
                   value={corrBefore || '—'}
                   fontSize={cfg.legendSize}
                   align="left"
+                  kid="corrA"
+                  label="相关性 (a)"
+                  format={cfg.formats?.corrA}
+                  selected={selected?.key === 'corrA'}
+                  onSelect={handleSelectText}
                 />
               </g>
               <g
@@ -829,6 +914,11 @@ function HrfAlignmentChart() {
                   value={corrAfter || '—'}
                   fontSize={cfg.legendSize}
                   align="left"
+                  kid="corrB"
+                  label="相关性 (b)"
+                  format={cfg.formats?.corrB}
+                  selected={selected?.key === 'corrB'}
+                  onSelect={handleSelectText}
                 />
               </g>
             </>
@@ -869,6 +959,11 @@ function HrfAlignmentChart() {
                     value={s.label}
                     fontSize={cfg.legendSize}
                     align="left"
+                    kid={`legend-${i}`}
+                    label={`图例 ${i + 1}`}
+                    format={cfg.formats?.[`legend-${i}`]}
+                    selected={selected?.key === `legend-${i}`}
+                    onSelect={handleSelectText}
                   />
                 </g>
               ))}
@@ -899,8 +994,60 @@ function HrfAlignmentChart() {
                 value={cfg.noteText}
                 fontSize={cfg.noteSize}
                 align={cfg.noteAlign}
+                kid="note"
+                label="黄色注释框"
+                format={cfg.formats?.note}
+                selected={selected?.key === 'note'}
+                onSelect={handleSelectText}
               />
             </g>
+          ) : null}
+
+          {selected ? (
+            <rect
+              x={0}
+              y={0}
+              width={W_FIG}
+              height={H_FIG}
+              fill="transparent"
+              pointerEvents="all"
+              onMouseDown={handleClearSelection}
+              data-export="false"
+              style={{ cursor: 'default' }}
+            />
+          ) : null}
+          {selected ? (
+            (() => {
+              const popoverWidth = 280;
+              const popoverHeight = 130;
+              const margin = 6;
+              const ax = Math.max(
+                4,
+                Math.min(
+                  W_FIG - popoverWidth - 4,
+                  selected.x + selected.w / 2 - popoverWidth / 2,
+                ),
+              );
+              const ay =
+                selected.y + selected.h + margin + popoverHeight > H_FIG
+                  ? Math.max(4, selected.y - popoverHeight - margin)
+                  : selected.y + selected.h + margin;
+              const popoverDefaults: TextFormatDefaults = selected.defaults;
+              return (
+                <TextFormatPopover
+                  anchorX={ax}
+                  anchorY={ay}
+                  width={popoverWidth}
+                  height={popoverHeight}
+                  override={cfg.formats?.[selected.key]}
+                  defaults={popoverDefaults}
+                  label={selected.label}
+                  onChange={(p) => handlePatchFormat(selected.key, p)}
+                  onReset={() => handleResetElementFormat(selected.key)}
+                  onClose={handleClearSelection}
+                />
+              );
+            })()
           ) : null}
         </FigureFrame>
       }
@@ -963,12 +1110,26 @@ function PanelChrome({
   yLabel,
   showGrid,
   axisLabelSize,
+  xLabelKid,
+  yLabelKid,
+  xLabelLabel,
+  yLabelLabel,
+  formats,
+  selectedKey,
+  onSelectText,
 }: {
   ax: PanelAxes;
   xLabel: string;
   yLabel: string;
   showGrid: boolean;
   axisLabelSize: number;
+  xLabelKid?: string;
+  yLabelKid?: string;
+  xLabelLabel?: string;
+  yLabelLabel?: string;
+  formats?: FormatStore;
+  selectedKey?: string;
+  onSelectText?: (anchor: SelectedTextAnchor) => void;
 }) {
   return (
     <g>
@@ -1044,6 +1205,11 @@ function PanelChrome({
         value={xLabel}
         fontSize={axisLabelSize}
         align="center"
+        kid={xLabelKid}
+        label={xLabelLabel}
+        format={xLabelKid ? formats?.[xLabelKid] : undefined}
+        selected={!!xLabelKid && selectedKey === xLabelKid}
+        onSelect={onSelectText}
       />
       <g transform={`translate(${ax.x0 - 50}, ${(ax.yTop + ax.yBot) / 2}) rotate(-90)`}>
         <ForeignText
@@ -1054,6 +1220,11 @@ function PanelChrome({
           value={yLabel}
           fontSize={axisLabelSize}
           align="center"
+          kid={yLabelKid}
+          label={yLabelLabel}
+          format={yLabelKid ? formats?.[yLabelKid] : undefined}
+          selected={!!yLabelKid && selectedKey === yLabelKid}
+          onSelect={onSelectText}
         />
       </g>
     </g>
@@ -1085,66 +1256,6 @@ function PathLine({
       strokeLinecap="round"
       clipPath={`inset(${ax.yTop}px ${0}px ${ax.yBot}px ${0}px)`}
     />
-  );
-}
-
-function ForeignText({
-  x,
-  y,
-  width,
-  height,
-  value,
-  fontSize,
-  fontWeight,
-  align = 'left',
-  color,
-}: {
-  x: number;
-  y: number;
-  width: number;
-  height: number;
-  value: string;
-  fontSize: number;
-  fontWeight?: number;
-  align?: Align;
-  color?: string;
-}) {
-  const lines = value.split('\n');
-  const justify =
-    align === 'center'
-      ? 'center'
-      : align === 'right'
-      ? 'flex-end'
-      : 'flex-start';
-  return (
-    <foreignObject
-      x={x}
-      y={y}
-      width={width}
-      height={Math.max(height, lines.length * (fontSize + 4))}
-      data-latex={value}
-      data-latex-font-size={fontSize}
-      data-latex-font-weight={fontWeight ?? 400}
-    >
-      <div
-        style={{
-          display: 'flex',
-          flexDirection: 'column',
-          alignItems: justify,
-          textAlign: align as 'left' | 'center' | 'right',
-          fontFamily: 'Inter, "Noto Sans SC", system-ui, sans-serif',
-          fontSize,
-          fontWeight: fontWeight ?? 400,
-          color: color ?? '#1c1c1c',
-          lineHeight: 1.3,
-        }}
-        dangerouslySetInnerHTML={{
-          __html: lines
-            .map((l) => `<div>${l ? renderInlineLatex(l) : '&nbsp;'}</div>`)
-            .join(''),
-        }}
-      />
-    </foreignObject>
   );
 }
 
