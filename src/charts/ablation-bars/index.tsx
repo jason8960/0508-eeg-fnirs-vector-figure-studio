@@ -16,7 +16,12 @@ import { registerChart } from '../../registry';
 import { mulberry32, randn } from '../../lib/random';
 import { EditableSvgText } from '../../components/EditableSvgText';
 import { useEvalChartConfig } from '../../lib/useEvalChartConfig';
+import {
+  useLatestPythonEmitter,
+  type PythonEmitter,
+} from '../../lib/pythonExport';
 import type { TextOverrideMap } from '../../lib/useTextOverrides';
+import { emitAblationBarsPython } from './python';
 
 /**
  * Ablation experiment under LOSO patient-independent splits.
@@ -174,6 +179,7 @@ function AblationBars() {
     setShowErrorBars(cfg.showErrorBars);
     setErrorMagnitude(cfg.errorMagnitude);
   }, []);
+  const pythonEmitterRef = useRef<PythonEmitter | null>(null);
   const { textOverrides, renderInspectorSections } = useEvalChartConfig<
     SavedConfig
   >({
@@ -181,6 +187,8 @@ function AblationBars() {
     buildBaseConfig,
     applyBaseConfig,
     filename: 'ablation-bars-config.json',
+    pythonEmitterRef,
+    pythonFilename: 'ablation-bars.py',
   });
 
   const expertSchema: ExpertSchema = [
@@ -353,6 +361,24 @@ function AblationBars() {
       'Synthetic values aligned with §3 Table 5; bars are mean across folds.',
     fontSize: 12,
   });
+
+  useLatestPythonEmitter(pythonEmitterRef, () =>
+    emitAblationBarsPython({
+      title: titleStyle.text,
+      caption: captionStyle.text,
+      conditionIds: CONDITIONS.map((c) => c.id),
+      conditionDetails: CONDITIONS.map((c) => c.detail),
+      fullIndex: CONDITIONS.findIndex((c) => c.isFull),
+      seCHB: data.seCHB,
+      seTUSZ: data.seTUSZ,
+      faCHB: data.faCHB,
+      showValues,
+      highlightFull,
+      showErrorBars,
+      errorMagnitude,
+      palette,
+    }),
+  );
   const panelATitleId = 'panel-a-title';
   const panelBTitleId = 'panel-b-title';
   const legendChbId = 'legend-chb';

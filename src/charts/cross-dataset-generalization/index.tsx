@@ -17,6 +17,11 @@ import {
 import { registerChart } from '../../registry';
 import { EditableSvgText } from '../../components/EditableSvgText';
 import { useEvalChartConfig } from '../../lib/useEvalChartConfig';
+import {
+  useLatestPythonEmitter,
+  type PythonEmitter,
+} from '../../lib/pythonExport';
+import { emitCrossDatasetPython } from './python';
 import type { TextOverrideMap } from '../../lib/useTextOverrides';
 
 // Datasets
@@ -127,6 +132,7 @@ function CrossDatasetGeneralizationChart() {
     setMinValue(cfg.minValue);
     setMaxValue(cfg.maxValue);
   }, []);
+  const pythonEmitterRef = useRef<PythonEmitter | null>(null);
   const { textOverrides, renderInspectorSections } = useEvalChartConfig<
     SavedConfig
   >({
@@ -134,6 +140,8 @@ function CrossDatasetGeneralizationChart() {
     buildBaseConfig,
     applyBaseConfig,
     filename: 'cross-dataset-config.json',
+    pythonEmitterRef,
+    pythonFilename: 'cross-dataset-generalization.py',
   });
 
   const expertSchema: ExpertSchema = [
@@ -258,6 +266,30 @@ function CrossDatasetGeneralizationChart() {
     text: `三模型×三数据集交叉验证 (seed=${seed}) · 对角线=同数据集，非对角线=跨数据集泛化`,
     fontSize: 12,
   });
+
+  useLatestPythonEmitter(pythonEmitterRef, () =>
+    emitCrossDatasetPython({
+      title: titleStyle.text,
+      caption: captionStyle.text,
+      modelNames: MODELS.map((m) => m.name),
+      datasets: Array.from(DATASETS),
+      matrices: allData.map(({ data }) => {
+        const k = DATASETS.length;
+        const m: number[][] = Array.from({ length: k }, () => Array(k).fill(0));
+        data.forEach((d) => {
+          const i = DATASETS.indexOf(d.trainDataset);
+          const j = DATASETS.indexOf(d.testDataset);
+          if (i >= 0 && j >= 0) m[i][j] = d.value;
+        });
+        return m;
+      }),
+      showValues,
+      highlightDiagonal,
+      minValue,
+      maxValue,
+      colormapName: colormap,
+    }),
+  );
   const textRefs = useMemo(() => {
     const refs: Array<{
       id: string;

@@ -13,6 +13,11 @@ import { InspirationPanel } from '../../components/InspirationPanel';
 import { registerChart } from '../../registry';
 import { EditableSvgText } from '../../components/EditableSvgText';
 import { useEvalChartConfig } from '../../lib/useEvalChartConfig';
+import {
+  useLatestPythonEmitter,
+  type PythonEmitter,
+} from '../../lib/pythonExport';
+import { emitMethodRadarPython } from './python';
 import type { TextOverrideMap } from '../../lib/useTextOverrides';
 
 /**
@@ -140,6 +145,7 @@ function MethodRadar() {
     setOpacityOurs(cfg.opacityOurs);
   }, []);
 
+  const pythonEmitterRef = useRef<PythonEmitter | null>(null);
   const { textOverrides, renderInspectorSections } = useEvalChartConfig<
     SavedConfig
   >({
@@ -147,6 +153,8 @@ function MethodRadar() {
     buildBaseConfig,
     applyBaseConfig,
     filename: 'method-radar-config.json',
+    pythonEmitterRef,
+    pythonFilename: 'method-radar.py',
   });
 
   const palette = useMemo(() => {
@@ -314,6 +322,25 @@ function MethodRadar() {
     text: 'Per-axis scores in [0, 1]; higher = stronger.',
     fontSize: 12,
   });
+
+  useLatestPythonEmitter(pythonEmitterRef, () =>
+    emitMethodRadarPython({
+      title: titleStyle.text,
+      caption: captionStyle.text,
+      axes: AXES.map((a) => a.labelEn ?? a.labelZh),
+      methods: METHODS.map((m, i) => ({
+        name: m.name,
+        scores: m.scores,
+        highlight: Boolean(m.highlight),
+        color: palette[i] ?? '#444',
+      })),
+      showLegend,
+      showLabels,
+      showRings,
+      highlightOnly,
+      opacityOurs,
+    }),
+  );
 
   return (
     <ChartShell

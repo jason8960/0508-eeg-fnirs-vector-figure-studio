@@ -15,7 +15,12 @@ import { InspirationPanel } from '../../components/InspirationPanel';
 import { registerChart } from '../../registry';
 import { EditableSvgText } from '../../components/EditableSvgText';
 import { useEvalChartConfig } from '../../lib/useEvalChartConfig';
+import {
+  useLatestPythonEmitter,
+  type PythonEmitter,
+} from '../../lib/pythonExport';
 import type { TextOverrideMap } from '../../lib/useTextOverrides';
+import { emitCalibrationCurvePython } from './python';
 
 interface ModelSpec {
   name: string;
@@ -119,6 +124,7 @@ function CalibrationChart() {
     setBins(cfg.bins);
     setPrevalence(cfg.prevalence);
   }, []);
+  const pythonEmitterRef = useRef<PythonEmitter | null>(null);
   const { textOverrides, renderInspectorSections } = useEvalChartConfig<
     SavedConfig
   >({
@@ -126,6 +132,8 @@ function CalibrationChart() {
     buildBaseConfig,
     applyBaseConfig,
     filename: 'calibration-curve-config.json',
+    pythonEmitterRef,
+    pythonFilename: 'calibration-curve.py',
   });
 
   const expertSchema: ExpertSchema = [
@@ -204,6 +212,24 @@ function CalibrationChart() {
     text: `ECE computed across ${bins} equal-width probability bins.`,
     fontSize: 12,
   });
+
+  useLatestPythonEmitter(pythonEmitterRef, () =>
+    emitCalibrationCurvePython({
+      title: titleStyle.text,
+      caption: captionStyle.text,
+      models: models.map((m, i) => ({
+        name: m.spec.name,
+        meanScore: m.bins.filter((b) => b.count > 0).map((b) => b.meanScore),
+        fractionPositive: m.bins
+          .filter((b) => b.count > 0)
+          .map((b) => b.fractionPositive),
+        ece: m.ece,
+        color: palette[i] ?? '#444',
+      })),
+      bins,
+      n,
+    }),
+  );
   const textRefs = useMemo(() => {
     const refs: Array<{
       id: string;

@@ -17,6 +17,11 @@ import { registerChart } from '../../registry';
 import { computeConfidenceEllipse } from './ellipse';
 import { EditableSvgText } from '../../components/EditableSvgText';
 import { useEvalChartConfig } from '../../lib/useEvalChartConfig';
+import {
+  useLatestPythonEmitter,
+  type PythonEmitter,
+} from '../../lib/pythonExport';
+import { emitFeatureManifoldPython } from './python';
 import type { TextOverrideMap } from '../../lib/useTextOverrides';
 
 type Embedding = 'tsne-like' | 'umap-like';
@@ -66,6 +71,7 @@ function FeatureManifold() {
     setSeedOverride(cfg.seedOverride);
     setPointRadius(cfg.pointRadius);
   }, []);
+  const pythonEmitterRef = useRef<PythonEmitter | null>(null);
   const { textOverrides, renderInspectorSections } = useEvalChartConfig<
     SavedConfig
   >({
@@ -73,6 +79,8 @@ function FeatureManifold() {
     buildBaseConfig,
     applyBaseConfig,
     filename: 'feature-manifold-config.json',
+    pythonEmitterRef,
+    pythonFilename: 'feature-manifold.py',
   });
 
   const seed = seedOverride ?? (embedding === 'umap-like' ? 19 : 23);
@@ -152,6 +160,32 @@ function FeatureManifold() {
     text: 'Synthetic clusters; coordinates are unitless. Marker = sample.',
     fontSize: 12,
   });
+
+  useLatestPythonEmitter(pythonEmitterRef, () =>
+    emitFeatureManifoldPython({
+      title: titleStyle.text,
+      caption: captionStyle.text,
+      classLabels: CLASS_LABELS,
+      palette,
+      xs: points.map((p) => p.x),
+      ys: points.map((p) => p.y),
+      classIds: points.map((p) => p.label),
+      showEllipses,
+      ellipses: ellipses.map((e) =>
+        e
+          ? {
+              cx: e.cx,
+              cy: e.cy,
+              rx: e.rx,
+              ry: e.ry,
+              angle: (e.angle * 180) / Math.PI,
+            }
+          : { cx: 0, cy: 0, rx: 0, ry: 0, angle: 0 },
+      ),
+      pointRadius,
+      embedding: embedding === 'umap-like' ? 'UMAP-like' : 't-SNE-like',
+    }),
+  );
   const textRefs = useMemo(() => {
     const refs: Array<{
       id: string;

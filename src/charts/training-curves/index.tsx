@@ -18,6 +18,11 @@ import {
 import { registerChart } from '../../registry';
 import { EditableSvgText } from '../../components/EditableSvgText';
 import { useEvalChartConfig } from '../../lib/useEvalChartConfig';
+import {
+  useLatestPythonEmitter,
+  type PythonEmitter,
+} from '../../lib/pythonExport';
+import { emitTrainingCurvesPython } from './python';
 import type { TextOverrideMap } from '../../lib/useTextOverrides';
 
 interface CurveData {
@@ -166,12 +171,15 @@ function TrainingCurvesChart() {
     setShowAuc(cfg.showAuc);
     setLineWidth(cfg.lineWidth);
   }, []);
+  const pythonEmitterRef = useRef<PythonEmitter | null>(null);
   const { textOverrides, renderInspectorSections } = useEvalChartConfig<
     SavedConfig
   >({
     storageKey: STORAGE_KEY,
     buildBaseConfig,
     applyBaseConfig,
+    pythonEmitterRef,
+    pythonFilename: 'training-curves.py',
     filename: 'training-curves-config.json',
   });
 
@@ -372,6 +380,25 @@ function TrainingCurvesChart() {
     fontSize: 13,
     fontWeight: 600,
   });
+
+  useLatestPythonEmitter(pythonEmitterRef, () =>
+    emitTrainingCurvesPython({
+      title: titleStyle.text,
+      caption: captionStyle.text,
+      epochs: data.epochs,
+      trainLoss: data.trainLoss,
+      valLoss: data.valLoss,
+      valAuprc: data.valAuprc,
+      valAuc: data.valAuc,
+      earlyStopEpoch: data.earlyStopEpoch,
+      showEarlyStop,
+      showTrainLoss,
+      showValLoss,
+      showAuprc,
+      showAuc,
+      lineWidth,
+    }),
+  );
   const textRefs = useMemo(() => {
     return [
       { id: titleId, label: '主标题', defaultText: titleDefault, defaultFontSize: 14, defaultFontWeight: 600 },

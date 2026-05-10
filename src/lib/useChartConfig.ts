@@ -42,6 +42,8 @@ export interface UseChartConfigResult<T> {
     deleteConfigSlot: (name: string) => void;
     /** Optional reset wired by the higher-level hook. */
     onReset?: () => void;
+    /** Optional Python source code emitter. */
+    onExportPython?: () => void;
   };
 }
 
