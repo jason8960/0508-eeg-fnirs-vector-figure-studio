@@ -21,7 +21,6 @@ import { FigureFrame } from '../../components/FigureFrame';
 import {
   ControlGroup,
   NumberSlider,
-  Select,
   TextArea,
   Toggle,
 } from '../../components/Controls';
@@ -29,7 +28,8 @@ import type { ExpertSchema } from '../../components/ExpertPanel';
 import { InspirationPanel } from '../../components/InspirationPanel';
 import { renderInlineLatex } from '../../lib/latex';
 import { registerChart } from '../../registry';
-import { touchSlot, useAutoSave } from '../../lib/useAutoSave';
+import { useEvalChartConfig } from '../../lib/useEvalChartConfig';
+import type { TextOverrideMap } from '../../lib/useTextOverrides';
 
 /* ----------------------------- types ---------------------------------- */
 
@@ -79,6 +79,7 @@ interface SavedConfig {
   formulaSize: number;
   legendSize: number;
   noteSize: number;
+  textOverrides?: TextOverrideMap;
 }
 
 /* ----------------------------- defaults ------------------------------- */
@@ -152,38 +153,7 @@ const DEFAULT_CONFIG: SavedConfig = {
 
 /* ----------------------------- persistence ---------------------------- */
 
-const STORAGE_KEY = 'chart:gat-attention:slots';
-
-function loadStoredConfigs(): Record<string, SavedConfig> {
-  try {
-    const raw = localStorage.getItem(STORAGE_KEY);
-    if (!raw) return {};
-    const parsed = JSON.parse(raw) as Record<string, SavedConfig>;
-    return parsed && typeof parsed === 'object' ? parsed : {};
-  } catch {
-    return {};
-  }
-}
-
-function persistConfigs(slots: Record<string, SavedConfig>) {
-  try {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(slots));
-  } catch {
-    /* quota — silent */
-  }
-}
-
-function downloadJson(filename: string, payload: unknown) {
-  const blob = new Blob([JSON.stringify(payload, null, 2)], {
-    type: 'application/json',
-  });
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement('a');
-  a.href = url;
-  a.download = filename;
-  a.click();
-  URL.revokeObjectURL(url);
-}
+const STORAGE_KEY = 'gat-attention-configs-v1';
 
 /* ----------------------------- canvas ---------------------------- */
 
@@ -195,10 +165,6 @@ const H_FIG = 700;
 function GatAttentionChart() {
   const svgRef = useRef<SVGSVGElement>(null);
   const [cfg, setCfg] = useState<SavedConfig>(() => DEFAULT_CONFIG);
-  const [slots, setSlots] = useState<Record<string, SavedConfig>>(() =>
-    loadStoredConfigs(),
-  );
-  const [slotName, setSlotName] = useState<string>('');
 
   const patch = useCallback((p: Partial<SavedConfig>) => {
     setCfg((prev) => ({ ...prev, ...p }));
@@ -222,75 +188,18 @@ function GatAttentionChart() {
     [],
   );
 
-  const persistAndSet = useCallback(
-    (next: Record<string, SavedConfig>) => {
-      persistConfigs(next);
-      setSlots(next);
-    },
-    [],
-  );
-
-  const handleSaveSlot = useCallback(() => {
-    const trimmed = slotName.trim();
-    if (!trimmed) return;
-    const next = { ...slots, [trimmed]: cfg };
-    persistAndSet(next);
-    touchSlot(STORAGE_KEY, trimmed);
-  }, [slotName, slots, cfg, persistAndSet]);
-
-  const handleLoadSlot = useCallback(
-    (name: string) => {
-      const v = slots[name];
-      if (!v) return;
-      setCfg(v);
-      touchSlot(STORAGE_KEY, name);
-    },
-    [slots],
-  );
-
-  const handleDeleteSlot = useCallback(
-    (name: string) => {
-      const next = { ...slots };
-      delete next[name];
-      persistAndSet(next);
-    },
-    [slots, persistAndSet],
-  );
-
-  const handleExportConfig = useCallback(() => {
-    downloadJson('gat-attention-config.json', cfg);
-  }, [cfg]);
-
-  const handleImportConfig = useCallback(
-    (e: React.ChangeEvent<HTMLInputElement>) => {
-      const file = e.target.files?.[0];
-      if (!file) return;
-      const reader = new FileReader();
-      reader.onload = () => {
-        try {
-          const parsed = JSON.parse(reader.result as string) as SavedConfig;
-          if (parsed && parsed.version === 1) setCfg(parsed);
-        } catch {
-          /* ignore */
-        }
-      };
-      reader.readAsText(file);
-      e.target.value = '';
-    },
-    [],
-  );
-
-  const handleResetAll = useCallback(() => {
-    setCfg(DEFAULT_CONFIG);
+  const buildBaseConfig = useCallback((): SavedConfig => cfg, [cfg]);
+  const applyBaseConfig = useCallback((c: SavedConfig) => {
+    if (!c || c.version !== 1) return;
+    setCfg(c);
   }, []);
-
-  useAutoSave<SavedConfig>({
+  const { renderInspectorSections } = useEvalChartConfig<SavedConfig>({
     storageKey: STORAGE_KEY,
-    current: cfg,
-    slots,
-    onPersistSlots: persistAndSet,
-    applyConfig: setCfg,
+    buildBaseConfig,
+    applyBaseConfig,
+    filename: 'gat-attention-config.json',
   });
+  const textRefs = useMemo(() => [], []);
 
   /* ----------------------- softmax over logits ------------------------ */
   const alphas = useMemo(() => {
@@ -300,8 +209,6 @@ function GatAttentionChart() {
     const Z = exps.reduce((a, b) => a + b, 0);
     return exps.map((e) => e / (Z || 1));
   }, [cfg.neighbours]);
-
-  const slotOptions = useMemo(() => Object.keys(slots).sort(), [slots]);
 
   /* ----------------------- inspector schema ------------------------ */
   const expertSchema: ExpertSchema = useMemo(
@@ -473,17 +380,7 @@ function GatAttentionChart() {
               rows={2}
             />
           </ControlGroup>
-          <ConfigManager
-            slotOptions={slotOptions}
-            slotName={slotName}
-            setSlotName={setSlotName}
-            onSave={handleSaveSlot}
-            onLoad={handleLoadSlot}
-            onDelete={handleDeleteSlot}
-            onExport={handleExportConfig}
-            onImport={handleImportConfig}
-            onReset={handleResetAll}
-          />
+          {renderInspectorSections(textRefs)}
         </>
       }
       inspiration={
@@ -1097,73 +994,6 @@ function useDragHandlers(
         (b) => patch({ notePos: b }),
       ),
   };
-}
-
-function ConfigManager({
-  slotOptions,
-  slotName,
-  setSlotName,
-  onSave,
-  onLoad,
-  onDelete,
-  onExport,
-  onImport,
-  onReset,
-}: {
-  slotOptions: string[];
-  slotName: string;
-  setSlotName: (s: string) => void;
-  onSave: () => void;
-  onLoad: (n: string) => void;
-  onDelete: (n: string) => void;
-  onExport: () => void;
-  onImport: (e: React.ChangeEvent<HTMLInputElement>) => void;
-  onReset: () => void;
-}) {
-  const [selected, setSelected] = useState<string>('');
-  const fileRef = useRef<HTMLInputElement>(null);
-  return (
-    <ControlGroup label="配置管理 / 自动存档">
-      <div className="flex gap-2">
-        <input
-          type="text"
-          value={slotName}
-          onChange={(e) => setSlotName(e.target.value)}
-          placeholder="新槽位名"
-          className="flex-1 rounded border border-ink-600 bg-ink-800 px-2 py-1 text-xs text-ink-50"
-        />
-        <button
-          type="button"
-          onClick={onSave}
-          className="rounded bg-accent px-2 py-1 text-xs font-semibold text-ink-900 hover:opacity-90"
-        >
-          保存
-        </button>
-      </div>
-      <Select
-        label="槽位（含 auto-#…）"
-        value={selected}
-        options={[
-          { value: '', label: '— 选择 —' },
-          ...slotOptions.map((n) => ({ value: n, label: n })),
-        ]}
-        onChange={setSelected}
-      />
-      <div className="flex gap-2">
-        <button type="button" onClick={() => selected && onLoad(selected)} disabled={!selected} className="flex-1 rounded border border-ink-600 px-2 py-1 text-xs text-ink-100 disabled:opacity-50">载入</button>
-        <button type="button" onClick={() => selected && onDelete(selected)} disabled={!selected} className="flex-1 rounded border border-ink-600 px-2 py-1 text-xs text-ink-100 disabled:opacity-50">删除</button>
-      </div>
-      <div className="flex gap-2 pt-1">
-        <button type="button" onClick={onExport} className="flex-1 rounded border border-ink-600 px-2 py-1 text-xs text-ink-100">导出 JSON</button>
-        <button type="button" onClick={() => fileRef.current?.click()} className="flex-1 rounded border border-ink-600 px-2 py-1 text-xs text-ink-100">导入</button>
-        <input ref={fileRef} type="file" accept="application/json" className="hidden" onChange={onImport} />
-      </div>
-      <button type="button" onClick={onReset} className="w-full rounded border border-ink-600 px-2 py-1 text-xs text-ink-100">恢复默认</button>
-      <p className="text-[10px] leading-snug text-ink-300">
-        每 5 分钟自动比对快照；改动会写入 auto-#N 槽位（最多 20 条）。
-      </p>
-    </ControlGroup>
-  );
 }
 
 /* ============================================================= */
