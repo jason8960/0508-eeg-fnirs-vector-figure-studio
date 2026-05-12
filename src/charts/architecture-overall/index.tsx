@@ -20,6 +20,11 @@ import { InspirationPanel } from '../../components/InspirationPanel';
 import { renderInlineLatex } from '../../lib/latex';
 import { registerChart } from '../../registry';
 import { useEvalChartConfig } from '../../lib/useEvalChartConfig';
+import {
+  useLatestPythonEmitter,
+  type PythonEmitter,
+} from '../../lib/pythonExport';
+import { emitArchOverallPython, deLatex as archDeLatex } from './python';
 import type { TextOverrideMap } from '../../lib/useTextOverrides';
 
 /* ----------------------------- types -----------------------------------*/
@@ -725,11 +730,14 @@ function ArchitectureOverallChart() {
     setAnnotations(cfg.annotations ?? []);
   }, []);
 
+  const pythonEmitterRef = useRef<PythonEmitter | null>(null);
   const { renderInspectorSections } = useEvalChartConfig<SavedConfig>({
     storageKey: STORAGE_KEY,
     buildBaseConfig: buildCurrentConfig,
     applyBaseConfig: applyConfig,
     filename: 'architecture-overall.config.json',
+    pythonEmitterRef,
+    pythonFilename: 'architecture-overall.py',
   });
   const textRefs = useMemo(() => [], []);
 
@@ -819,6 +827,113 @@ function ArchitectureOverallChart() {
     margin.left,
     panelTop,
   ]);
+
+  useLatestPythonEmitter(pythonEmitterRef, () => {
+    type Anchor2 = 'right' | 'left' | 'top' | 'bottom' | 'center';
+    type EdgeStyle2 = 'solid' | 'dashed' | 'dotted';
+
+    const emittedEdges = visibleEdges.flatMap((e) => {
+      const a = panelMap.get(e.from);
+      const b = panelMap.get(e.to);
+      if (!a || !b) return [];
+      const ov = edgeOverrides[e.id];
+      const fromAnchor: Anchor2 = (e.fromAnchor ?? 'right') as Anchor2;
+      const toAnchor: Anchor2 = (e.toAnchor ?? 'left') as Anchor2;
+      const yFracFrom = e.fromYFrac ?? 0.5;
+      const yFracTo = e.toYFrac ?? 0.5;
+      const aPt = anchorPoint(a, fromAnchor, yFracFrom);
+      const bPt = anchorPoint(b, toAnchor, yFracTo);
+      const fx = aPt.x + (ov?.fromDx ?? 0);
+      const fy = aPt.y + (ov?.fromDy ?? 0);
+      const tx = bPt.x + (ov?.toDx ?? 0);
+      const ty = bPt.y + (ov?.toDy ?? 0);
+      const labelDx = ov?.labelDx ?? 0;
+      const labelDy = ov?.labelDy ?? 0;
+      const lx = (fx + tx) / 2 + labelDx;
+      const ly = (fy + ty) / 2 + labelDy;
+      return [
+        {
+          id: e.id,
+          fx,
+          fy,
+          tx,
+          ty,
+          fromAnchor,
+          toAnchor,
+          color: PALETTE[e.category].edge,
+          width: e.thickness ?? 1.6,
+          style: ((e.style ?? 'solid') as EdgeStyle2),
+          label: e.label ?? '',
+          labelX: lx,
+          labelY: ly,
+        },
+      ];
+    });
+
+    const emittedPanels = resolvedPanels.flatMap((p) => {
+      const slot = panelMap.get(p.id);
+      if (!slot) return [];
+      const ov = panelOverrides[p.id];
+      return [
+        {
+          id: p.id,
+          category: p.category,
+          fill: PALETTE[p.category].fill,
+          edge: PALETTE[p.category].edge,
+          textColor: PALETTE[p.category].text,
+          x: slot.x,
+          y: slot.y,
+          w: slot.w,
+          h: slot.h,
+          header: p.header,
+          headerSize: ov?.headerSize ?? headerSize,
+          bodySize: ov?.bodySize ?? bodySize,
+          headerAlign: (ov?.headerAlign ?? 'center') as 'left' | 'center' | 'right',
+          bodyAlign: (ov?.bodyAlign ?? 'center') as 'left' | 'center' | 'right',
+          body: p.body,
+        },
+      ];
+    });
+
+    const emittedAnnotations = annotations.map((a) => ({
+      text: a.text,
+      x: a.x,
+      y: a.y,
+      width: a.width,
+      fontSize: a.fontSize,
+      color: a.color,
+      align: a.align as 'left' | 'center' | 'right',
+      bold: a.bold === true,
+      italic: a.italic === true,
+    }));
+
+    const legendItems = (
+      ['eeg', 'fnirs', 'hrf', 'graph', 'gate', 'output'] as Category[]
+    ).map((c) => ({
+      category: c,
+      fill: PALETTE[c].fill,
+      edge: PALETTE[c].edge,
+      label: PALETTE[c].legend,
+    }));
+
+    return emitArchOverallPython({
+      width: W,
+      height: H,
+      title: 'GAT-CMC-Net  ·  Overall Architecture',
+      subtitle:
+        'Heterogeneous Graph  ·  Multi-Head Attention  ·  Learnable HRF Time-Shift  ·  Gated Cross-Modal Fusion',
+      showSubtitle,
+      showLegend,
+      legendY,
+      legendItems,
+      panels: emittedPanels,
+      edges: emittedEdges,
+      annotations: emittedAnnotations,
+    });
+  });
+
+  // Keep the deLatex import alive for downstream tweaks; emitter calls it.
+  void archDeLatex;
 
   /* ----------------------- expert schema -------------------------------*/
 
