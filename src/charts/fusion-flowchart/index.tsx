@@ -1,4 +1,4 @@
-import { useMemo, useRef, useState } from 'react';
+import { useCallback, useMemo, useRef, useState } from 'react';
 import { FigureFrame } from '../../components/FigureFrame';
 import { ChartShell } from '../../components/ChartShell';
 import {
@@ -11,6 +11,21 @@ import { sampleColormap, type ColormapName } from '../../lib/colormaps';
 import type { ExpertSchema } from '../../components/ExpertPanel';
 import { InspirationPanel } from '../../components/InspirationPanel';
 import { registerChart } from '../../registry';
+import { EditableSvgText } from '../../components/EditableSvgText';
+import { useEvalChartConfig } from '../../lib/useEvalChartConfig';
+import type { TextOverrideMap } from '../../lib/useTextOverrides';
+
+interface SavedConfig {
+  version: 1;
+  showShapes: boolean;
+  colSpacing: number;
+  colormap: ColormapName;
+  rowSpacing: number;
+  showLabels: boolean;
+  textOverrides?: TextOverrideMap;
+}
+
+const STORAGE_KEY = 'fusion-flowchart-configs-v1';
 
 interface BlockSpec {
   id: string;
@@ -61,6 +76,32 @@ function FlowchartChart() {
   const [rowSpacingState, setRowSpacing] = useState(110);
   const [showLabels, setShowLabels] = useState(true);
   const svgRef = useRef<SVGSVGElement>(null);
+
+  const buildBaseConfig = useCallback(
+    (): SavedConfig => ({
+      version: 1,
+      showShapes,
+      colSpacing,
+      colormap,
+      rowSpacing: rowSpacingState,
+      showLabels,
+    }),
+    [showShapes, colSpacing, colormap, rowSpacingState, showLabels],
+  );
+  const applyBaseConfig = useCallback((cfg: SavedConfig) => {
+    if (!cfg || cfg.version !== 1) return;
+    setShowShapes(cfg.showShapes);
+    setColSpacing(cfg.colSpacing);
+    setColormap(cfg.colormap);
+    setRowSpacing(cfg.rowSpacing);
+    setShowLabels(cfg.showLabels);
+  }, []);
+  const { textOverrides, renderInspectorSections } = useEvalChartConfig<SavedConfig>({
+    storageKey: STORAGE_KEY,
+    buildBaseConfig,
+    applyBaseConfig,
+    filename: 'fusion-flowchart-config.json',
+  });
 
   const expertSchema: ExpertSchema = [
     {
@@ -117,6 +158,63 @@ function FlowchartChart() {
     const dx = (x2 - x1) * 0.45;
     return `M${x1},${y1} C${x1 + dx},${y1} ${x2 - dx},${y2} ${x2},${y2}`;
   };
+
+  const titleId = 'title';
+  const captionId = 'caption';
+  const branchEegId = 'branch-eeg';
+  const branchFnirsId = 'branch-fnirs';
+  const titleDefault = 'Bimodal feature fusion flowchart';
+  const captionDefault = 'Layered DAG. Tensor shapes annotate each edge.';
+  const branchEegDefault = 'EEG branch';
+  const branchFnirsDefault = 'fNIRS branch';
+  const titleStyle = textOverrides.resolve(titleId, {
+    text: titleDefault,
+    fontSize: 14,
+    fontWeight: 600,
+  });
+  const captionStyle = textOverrides.resolve(captionId, {
+    text: captionDefault,
+    fontSize: 12,
+  });
+  const branchEegStyle = textOverrides.resolve(branchEegId, {
+    text: branchEegDefault,
+    fontSize: 11,
+    fontWeight: 600,
+    color: colorByGroup.eeg,
+  });
+  const branchFnirsStyle = textOverrides.resolve(branchFnirsId, {
+    text: branchFnirsDefault,
+    fontSize: 11,
+    fontWeight: 600,
+    color: colorByGroup.fnirs,
+  });
+  const textRefs = useMemo(
+    () => {
+      const refs: Array<{
+        id: string;
+        label: string;
+        defaultText: string;
+        defaultFontSize: number;
+        defaultFontWeight?: number;
+      }> = [
+        { id: titleId, label: '主标题', defaultText: titleDefault, defaultFontSize: 14, defaultFontWeight: 600 },
+        { id: captionId, label: '说明文字', defaultText: captionDefault, defaultFontSize: 12 },
+        { id: branchEegId, label: '分支：EEG', defaultText: branchEegDefault, defaultFontSize: 11, defaultFontWeight: 600 },
+        { id: branchFnirsId, label: '分支：fNIRS', defaultText: branchFnirsDefault, defaultFontSize: 11, defaultFontWeight: 600 },
+      ];
+      BLOCKS.forEach((b) => {
+        refs.push({
+          id: `block-${b.id}-label`,
+          label: `区块：${b.label}`,
+          defaultText: b.label,
+          defaultFontSize: 12,
+          defaultFontWeight: 600,
+        });
+      });
+      return refs;
+    },
+    [],
+  );
 
   return (
     <ChartShell
@@ -188,6 +286,7 @@ function FlowchartChart() {
             <Toggle label="显示张量形状" checked={showShapes} onChange={setShowShapes} />
             <ColormapSelect value={colormap} onChange={setColormap} />
           </ControlGroup>
+          {renderInspectorSections(textRefs)}
         </>
       }
       notes={
@@ -202,8 +301,14 @@ function FlowchartChart() {
           ref={svgRef}
           width={W}
           height={H + 80}
-          title="Bimodal feature fusion flowchart"
-          caption="Layered DAG. Tensor shapes annotate each edge."
+          title={titleStyle.text}
+          caption={captionStyle.text}
+          titleOverride={textOverrides.overrides[titleId]}
+          titleSelected={textOverrides.selectedId === titleId}
+          onSelectTitle={() => textOverrides.selectText(titleId)}
+          captionOverride={textOverrides.overrides[captionId]}
+          captionSelected={textOverrides.selectedId === captionId}
+          onSelectCaption={() => textOverrides.selectText(captionId)}
         >
           {/* Arrows */}
           <defs>
@@ -260,6 +365,13 @@ function FlowchartChart() {
           <g>
             {BLOCKS.map((b) => {
               const pos = positions.get(b.id)!;
+              const blockLabelId = `block-${b.id}-label`;
+              const blockLabelStyle = textOverrides.resolve(blockLabelId, {
+                text: b.label,
+                fontSize: 12,
+                fontWeight: 600,
+                color: 'white',
+              });
               return (
                 <g key={b.id} transform={`translate(${pos.x}, ${pos.y})`}>
                   <rect
@@ -272,17 +384,19 @@ function FlowchartChart() {
                     strokeWidth={1}
                   />
                   {showLabels ? (
-                    <text
+                    <EditableSvgText
+                      id={blockLabelId}
                       x={blockW / 2}
                       y={blockH / 2 - 4}
+                      style={blockLabelStyle}
                       textAnchor="middle"
-                      fontSize={12}
-                      fontWeight={600}
-                      fill="white"
-                      style={{ paintOrder: 'stroke', stroke: 'rgba(0,0,0,0.45)', strokeWidth: 2 }}
-                    >
-                      {b.label}
-                    </text>
+                      selected={textOverrides.selectedId === blockLabelId}
+                      onSelect={(id) => textOverrides.selectText(id)}
+                      onMove={(id, dx, dy) =>
+                        textOverrides.setOverride(id, { dx, dy })
+                      }
+                      svgRef={svgRef}
+                    />
                   ) : null}
                   <text
                     x={blockW / 2}
@@ -301,24 +415,30 @@ function FlowchartChart() {
           </g>
 
           {/* Branch labels */}
-          <text
+          <EditableSvgText
+            id={branchEegId}
             x={margin.left}
             y={margin.top - 18}
-            fontSize={11}
-            fontWeight={600}
-            fill={colorByGroup.eeg}
-          >
-            EEG branch
-          </text>
-          <text
+            style={branchEegStyle}
+            selected={textOverrides.selectedId === branchEegId}
+            onSelect={(id) => textOverrides.selectText(id)}
+            onMove={(id, dx, dy) =>
+              textOverrides.setOverride(id, { dx, dy })
+            }
+            svgRef={svgRef}
+          />
+          <EditableSvgText
+            id={branchFnirsId}
             x={margin.left}
             y={margin.top + 2 * rowSpacing - 12}
-            fontSize={11}
-            fontWeight={600}
-            fill={colorByGroup.fnirs}
-          >
-            fNIRS branch
-          </text>
+            style={branchFnirsStyle}
+            selected={textOverrides.selectedId === branchFnirsId}
+            onSelect={(id) => textOverrides.selectText(id)}
+            onMove={(id, dx, dy) =>
+              textOverrides.setOverride(id, { dx, dy })
+            }
+            svgRef={svgRef}
+          />
         </FigureFrame>
       }
     />

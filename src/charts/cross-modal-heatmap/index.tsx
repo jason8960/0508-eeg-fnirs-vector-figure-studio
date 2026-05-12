@@ -1,4 +1,4 @@
-import { useMemo, useRef, useState } from 'react';
+import { useCallback, useMemo, useRef, useState } from 'react';
 import { FigureFrame } from '../../components/FigureFrame';
 import { ChartShell } from '../../components/ChartShell';
 import {
@@ -15,6 +15,24 @@ import { mulberry32 } from '../../lib/random';
 import type { ExpertSchema } from '../../components/ExpertPanel';
 import { InspirationPanel } from '../../components/InspirationPanel';
 import { registerChart } from '../../registry';
+import { EditableSvgText } from '../../components/EditableSvgText';
+import { useEvalChartConfig } from '../../lib/useEvalChartConfig';
+import type { TextOverrideMap } from '../../lib/useTextOverrides';
+
+interface SavedConfig {
+  version: 1;
+  seed: number;
+  spread: number;
+  noise: number;
+  secondaryBand: number;
+  colormap: ColormapName;
+  showRegionTags: boolean;
+  showLabels: boolean;
+  highlightDiagonal: boolean;
+  textOverrides?: TextOverrideMap;
+}
+
+const STORAGE_KEY = 'cross-modal-heatmap-configs-v1';
 
 /**
  * Cross-modal attention heatmap (EEG → fNIRS).
@@ -126,6 +144,38 @@ function CrossModalHeatmap() {
   const [highlightDiagonal, setHighlightDiagonal] = useState(true);
   const svgRef = useRef<SVGSVGElement>(null);
 
+  const buildBaseConfig = useCallback(
+    (): SavedConfig => ({
+      version: 1,
+      seed,
+      spread,
+      noise,
+      secondaryBand,
+      colormap,
+      showRegionTags,
+      showLabels,
+      highlightDiagonal,
+    }),
+    [seed, spread, noise, secondaryBand, colormap, showRegionTags, showLabels, highlightDiagonal],
+  );
+  const applyBaseConfig = useCallback((cfg: SavedConfig) => {
+    if (!cfg || cfg.version !== 1) return;
+    setSeed(cfg.seed);
+    setSpread(cfg.spread);
+    setNoise(cfg.noise);
+    setSecondaryBand(cfg.secondaryBand);
+    setColormap(cfg.colormap);
+    setShowRegionTags(cfg.showRegionTags);
+    setShowLabels(cfg.showLabels);
+    setHighlightDiagonal(cfg.highlightDiagonal);
+  }, []);
+  const { textOverrides, renderInspectorSections } = useEvalChartConfig<SavedConfig>({
+    storageKey: STORAGE_KEY,
+    buildBaseConfig,
+    applyBaseConfig,
+    filename: 'cross-modal-heatmap-config.json',
+  });
+
   const matrix = useMemo(
     () => buildAttention({ seed, spread, noise, secondaryBand }),
     [seed, spread, noise, secondaryBand],
@@ -134,6 +184,50 @@ function CrossModalHeatmap() {
   const ne = EEG_CHANNELS.length;
   const nf = FNIRS_CHANNELS.length;
   const interp = getColormap(colormap);
+
+  const titleId = 'title';
+  const captionId = 'caption';
+  const eegAxisId = 'axis-eeg';
+  const fnirsAxisId = 'axis-fnirs';
+  const colorbarLabelId = 'colorbar-label';
+  const titleDefault = 'Cross-modal attention $\\alpha^{E \\to F}$ · EEG → fNIRS';
+  const captionDefault = '';
+  const eegAxisDefault = 'EEG channel';
+  const fnirsAxisDefault = 'fNIRS channel';
+  const colorbarLabelDefault = 'attention weight';
+  const titleStyle = textOverrides.resolve(titleId, {
+    text: titleDefault,
+    fontSize: 14,
+    fontWeight: 600,
+  });
+  const captionStyle = textOverrides.resolve(captionId, {
+    text: captionDefault,
+    fontSize: 12,
+  });
+  const eegAxisStyle = textOverrides.resolve(eegAxisId, {
+    text: eegAxisDefault,
+    fontSize: 11.5,
+    fontWeight: 500,
+  });
+  const fnirsAxisStyle = textOverrides.resolve(fnirsAxisId, {
+    text: fnirsAxisDefault,
+    fontSize: 11.5,
+    fontWeight: 500,
+  });
+  const colorbarLabelStyle = textOverrides.resolve(colorbarLabelId, {
+    text: colorbarLabelDefault,
+    fontSize: 11,
+  });
+  const textRefs = useMemo(
+    () => [
+      { id: titleId, label: '主标题', defaultText: titleDefault, defaultFontSize: 14, defaultFontWeight: 600 },
+      { id: captionId, label: '说明文字', defaultText: captionDefault, defaultFontSize: 12 },
+      { id: eegAxisId, label: 'EEG 轴标题', defaultText: eegAxisDefault, defaultFontSize: 11.5, defaultFontWeight: 500 },
+      { id: fnirsAxisId, label: 'fNIRS 轴标题', defaultText: fnirsAxisDefault, defaultFontSize: 11.5, defaultFontWeight: 500 },
+      { id: colorbarLabelId, label: '色条标签', defaultText: colorbarLabelDefault, defaultFontSize: 11 },
+    ],
+    [],
+  );
 
   const W = 820;
   const H = 480;
@@ -337,6 +431,7 @@ function CrossModalHeatmap() {
               onChange={setShowRegionTags}
             />
           </ControlGroup>
+          {renderInspectorSections(textRefs)}
         </>
       }
       notes={
@@ -352,10 +447,14 @@ function CrossModalHeatmap() {
           ref={svgRef}
           width={W}
           height={H + 80}
-          title={
-            'Cross-modal attention $\\alpha^{E \\to F}$ · EEG → fNIRS'
-          }
-          caption={`${ne} × ${nf} attention matrix; row-normalised, seed=${seed}.`}
+          title={titleStyle.text}
+          caption={captionStyle.text || `${ne} × ${nf} attention matrix; row-normalised, seed=${seed}.`}
+          titleOverride={textOverrides.overrides[titleId]}
+          titleSelected={textOverrides.selectedId === titleId}
+          onSelectTitle={() => textOverrides.selectText(titleId)}
+          captionOverride={textOverrides.overrides[captionId]}
+          captionSelected={textOverrides.selectedId === captionId}
+          onSelectCaption={() => textOverrides.selectText(captionId)}
         >
           <g transform={`translate(${margin.left}, ${margin.top})`}>
             {/* Cells */}
@@ -493,25 +592,33 @@ function CrossModalHeatmap() {
               ))}
 
             {/* Axis titles */}
-            <text
-              transform={`translate(${-72}, ${innerH / 2}) rotate(-90)`}
+            <EditableSvgText
+              id={eegAxisId}
+              x={-72}
+              y={innerH / 2}
+              style={eegAxisStyle}
+              rotate={-90}
               textAnchor="middle"
-              fontSize={11.5}
-              fontWeight={500}
-              fill="currentColor"
-            >
-              EEG channel
-            </text>
-            <text
+              selected={textOverrides.selectedId === eegAxisId}
+              onSelect={(id) => textOverrides.selectText(id)}
+              onMove={(id, dx, dy) =>
+                textOverrides.setOverride(id, { dx, dy })
+              }
+              svgRef={svgRef}
+            />
+            <EditableSvgText
+              id={fnirsAxisId}
               x={innerW / 2}
               y={innerH + 56}
+              style={fnirsAxisStyle}
               textAnchor="middle"
-              fontSize={11.5}
-              fontWeight={500}
-              fill="currentColor"
-            >
-              fNIRS channel
-            </text>
+              selected={textOverrides.selectedId === fnirsAxisId}
+              onSelect={(id) => textOverrides.selectText(id)}
+              onMove={(id, dx, dy) =>
+                textOverrides.setOverride(id, { dx, dy })
+              }
+              svgRef={svgRef}
+            />
 
             {/* Colour bar */}
             <g transform={`translate(${innerW + 24}, 0)`}>
@@ -565,14 +672,20 @@ function CrossModalHeatmap() {
                   </text>
                 </g>
               ))}
-              <text
-                transform={`translate(${66}, ${innerH / 2}) rotate(-90)`}
+              <EditableSvgText
+                id={colorbarLabelId}
+                x={66}
+                y={innerH / 2}
+                style={colorbarLabelStyle}
+                rotate={-90}
                 textAnchor="middle"
-                fontSize={11}
-                fill="currentColor"
-              >
-                attention weight
-              </text>
+                selected={textOverrides.selectedId === colorbarLabelId}
+                onSelect={(id) => textOverrides.selectText(id)}
+                onMove={(id, dx, dy) =>
+                  textOverrides.setOverride(id, { dx, dy })
+                }
+                svgRef={svgRef}
+              />
             </g>
           </g>
         </FigureFrame>
